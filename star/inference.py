@@ -33,6 +33,7 @@ def prediction(model, data_collator, args, test_dataset, embedding_memmap, ids_m
         batch_size=args.eval_batch_size*args.n_gpu,
         collate_fn=data_collator,
         drop_last=False,
+        num_workers=128
     )
     # multi-gpu eval
     if args.n_gpu > 1:

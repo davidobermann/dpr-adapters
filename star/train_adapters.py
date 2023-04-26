@@ -2,7 +2,7 @@
 import imp
 import sys
 
-from torch.utils.data import DataLoader
+from adapter_model import AdapterBertDot_InBatch, DPRHead
 
 sys.path.append("./")
 from model import BertDot_InBatch
@@ -13,12 +13,12 @@ import transformers
 from transformers import (
     HfArgumentParser,
     TrainingArguments,
-    set_seed, BertTokenizer, BertConfig,
+    set_seed, BertTokenizer, BertConfig, AdapterTrainer, AdapterConfig,
 )
 from transformers.integrations import TensorBoardCallback
 from dataset import TextTokenIdsCache, load_rel
 from dataset import (
-    TrainInbatchDataset, 
+    TrainInbatchDataset,
     TrainInbatchWithHardDataset,
     TrainInbatchWithRandDataset,
     triple_get_collate_function,
@@ -27,12 +27,12 @@ from dataset import (
 from torch.utils.tensorboard import SummaryWriter
 
 from transformers import (
-    Trainer, 
-    TrainerCallback, 
-    TrainingArguments, 
-    TrainerState, 
+    Trainer,
+    TrainerCallback,
+    TrainingArguments,
+    TrainerState,
     TrainerControl
-    )
+)
 from transformers import AdamW, get_linear_schedule_with_warmup
 from lamb import Lamb
 
@@ -77,8 +77,8 @@ class DRTrainer(Trainer):
                 )
             elif self.args.optimizer_str == "lamb":
                 self.optimizer = Lamb(
-                    optimizer_grouped_parameters, 
-                    lr=self.args.learning_rate, 
+                    optimizer_grouped_parameters,
+                    lr=self.args.learning_rate,
                     eps=self.args.adam_epsilon
                 )
             else:
@@ -87,7 +87,9 @@ class DRTrainer(Trainer):
             self.lr_scheduler = get_linear_schedule_with_warmup(
                 self.optimizer, num_warmup_steps=self.args.warmup_steps, num_training_steps=num_training_steps
             )
-    
+
+class DRAdapterTrainer(Trainer, AdapterTrainer):
+    pass
 
 class MyTensorBoardCallback(TensorBoardCallback):
     def on_train_begin(self, args, state, control, **kwargs):
@@ -108,24 +110,22 @@ class DataTrainingArguments:
 
 @dataclass
 class ModelArguments:
-    init_path: str = field(default='prajjwal1/bert-tiny') # please use bm25 warmup model or roberta-base
-    #gradient_checkpointing: bool = field(default=False)
+    init_path: str = field(default='prajjwal1/bert-tiny')  # please use bm25 warmup model or roberta-base
+    # gradient_checkpointing: bool = field(default=False)
 
 
 @dataclass
 class MyTrainingArguments(TrainingArguments):
-    output_dir: str = field(default="./data/models") # where to output
+    output_dir: str = field(default="./data/models")  # where to output
     logging_dir: str = field(default="./data/log")
     padding: bool = field(default=False)
-    optimizer_str: str = field(default="lamb") # or lamb
+    optimizer_str: str = field(default="lamb")  # or lamb
     overwrite_output_dir: bool = field(default=False)
-    batch_size: int = field(default=256, metadata={"help": "Batch size for training."})
-    workers: int = field(default=4, metadata={"help": "Number of Dataloader workers."})
-    #per_device_train_batch_size: int = field(
-    #    default=256, metadata={"help": "Batch size per GPU/TPU core/CPU for training."})
+    per_device_train_batch_size: int = field(
+        default=256, metadata={"help": "Batch size per GPU/TPU core/CPU for training."})
     gradient_accumulation_steps: int = field(
         default=1,
-        metadata={"help": "Number of updates steps to accumulate before performing a backward/update pass."},)
+        metadata={"help": "Number of updates steps to accumulate before performing a backward/update pass."}, )
 
     learning_rate: float = field(default=1e-4, metadata={"help": "The initial learning rate for Adam."})
     weight_decay: float = field(default=0.01, metadata={"help": "Weight decay if we apply some."})
@@ -144,7 +144,7 @@ class MyTrainingArguments(TrainingArguments):
     logging_first_step: bool = field(default=False, metadata={"help": "Log and eval the first global_step"})
     logging_steps: int = field(default=50, metadata={"help": "Log every X updates steps."})
     save_steps: int = field(default=1000, metadata={"help": "Save checkpoint every X updates steps."})
-    
+
     no_cuda: bool = field(default=False, metadata={"help": "Do not use CUDA even when it is available"})
     seed: int = field(default=42, metadata={"help": "random seed for initialization"})
 
@@ -160,10 +160,10 @@ def main():
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
     if (
-        os.path.exists(training_args.output_dir)
-        and os.listdir(training_args.output_dir)
-        and training_args.do_train
-        and not training_args.overwrite_output_dir
+            os.path.exists(training_args.output_dir)
+            and os.listdir(training_args.output_dir)
+            and training_args.do_train
+            and not training_args.overwrite_output_dir
     ):
         raise ValueError(
             f"Output directory ({training_args.output_dir}) already exists and is not empty. "
@@ -201,7 +201,7 @@ def main():
         use_fast=False,
     )
     config.gradient_checkpointing = model_args.gradient_checkpointing
-    
+
     data_args.label_path = os.path.join(data_args.preprocess_dir, "train-qrel.tsv")
     rel_dict = load_rel(data_args.label_path)
 
@@ -216,21 +216,22 @@ def main():
     )
 
     data_collator = triple_get_collate_function(
-       data_args.max_query_length, data_args.max_doc_length,
+        data_args.max_query_length, data_args.max_doc_length,
         rel_dict=rel_dict, padding=training_args.padding)
-
-    model_class = BertDot_InBatch
+    model_class = AdapterBertDot_InBatch
 
     model = model_class.from_pretrained(
         model_args.init_path,
         config=config,
     )
 
-    #training_args.set_dataloader(num_workers=8)
-    training_args.set_dataloader(train_batch_size=training_args.batch_size, num_workers=training_args.workers)
+    model.register_custom_head("dpr-head", DPRHead)
+    model.add_custom_head(head_type="dpr-head", head_name="dpr-head")
+    adapter_config = AdapterConfig.load()
+    model.add_adapter()
 
     # Initialize our Trainer
-    trainer = DRTrainer(
+    trainer = DRAdapterTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
