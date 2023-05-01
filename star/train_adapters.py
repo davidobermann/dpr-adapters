@@ -1,10 +1,13 @@
 # coding=utf-8
 import imp
 import sys
+sys.path.append("./")
+
+from torch.utils.data import DataLoader
+from transformers.adapters import AdapterTrainer
 
 from adapter_model import AdapterBertDot_InBatch, DPRHead
 
-sys.path.append("./")
 from model import BertDot_InBatch
 import logging
 import os
@@ -13,7 +16,7 @@ import transformers
 from transformers import (
     HfArgumentParser,
     TrainingArguments,
-    set_seed, BertTokenizer, BertConfig, AdapterTrainer, AdapterConfig,
+    set_seed, BertTokenizer, BertConfig, AdapterArguments,
 )
 from transformers.integrations import TensorBoardCallback
 from dataset import TextTokenIdsCache, load_rel
@@ -47,7 +50,7 @@ class MyTrainerCallback(TrainerCallback):
         control.should_save = True
 
 
-class DRTrainer(Trainer):
+class AdapterDRTrainer(AdapterTrainer):
 
     def create_optimizer_and_scheduler(self, num_training_steps: int):
         """
@@ -88,8 +91,6 @@ class DRTrainer(Trainer):
                 self.optimizer, num_warmup_steps=self.args.warmup_steps, num_training_steps=num_training_steps
             )
 
-class DRAdapterTrainer(Trainer, AdapterTrainer):
-    pass
 
 class MyTensorBoardCallback(TensorBoardCallback):
     def on_train_begin(self, args, state, control, **kwargs):
@@ -121,8 +122,11 @@ class MyTrainingArguments(TrainingArguments):
     padding: bool = field(default=False)
     optimizer_str: str = field(default="lamb")  # or lamb
     overwrite_output_dir: bool = field(default=False)
+    batch_size: int = field(default=256, metadata={"help": "Batch size for training."})
+    workers: int = field(default=4, metadata={"help": "Number of Dataloader workers."})
     per_device_train_batch_size: int = field(
         default=256, metadata={"help": "Batch size per GPU/TPU core/CPU for training."})
+    dataloader_num_workers: int = field(default=8)
     gradient_accumulation_steps: int = field(
         default=1,
         metadata={"help": "Number of updates steps to accumulate before performing a backward/update pass."}, )
@@ -156,8 +160,8 @@ class MyTrainingArguments(TrainingArguments):
 
 
 def main():
-    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, MyTrainingArguments))
-    model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, MyTrainingArguments, AdapterArguments))
+    model_args, data_args, training_args, adapter_args = parser.parse_args_into_dataclasses()
 
     if (
             os.path.exists(training_args.output_dir)
@@ -218,6 +222,7 @@ def main():
     data_collator = triple_get_collate_function(
         data_args.max_query_length, data_args.max_doc_length,
         rel_dict=rel_dict, padding=training_args.padding)
+
     model_class = AdapterBertDot_InBatch
 
     model = model_class.from_pretrained(
@@ -225,13 +230,15 @@ def main():
         config=config,
     )
 
-    model.register_custom_head("dpr-head", DPRHead)
-    model.add_custom_head(head_type="dpr-head", head_name="dpr-head")
-    adapter_config = AdapterConfig.load()
-    model.add_adapter()
+    model.add_custom_head('dpr-head', model.task_name)
+    model.train_adapter([model.task_name])
+    model.set_active_adapters([model.task_name])
+
+    # training_args.set_dataloader(num_workers=8)
+    # training_args.set_dataloader(train_batch_size=training_args.batch_size, num_workers=training_args.workers)
 
     # Initialize our Trainer
-    trainer = DRAdapterTrainer(
+    trainer = AdapterDRTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
@@ -248,7 +255,7 @@ def main():
 
     # Training
     trainer.train()
-    trainer.save_model()  # Saves the tokenizer too for easy upload
+    trainer.save_model()
 
 
 def _mp_fn(index):

@@ -1,21 +1,23 @@
 import enum
 import sys
 from torch._C import dtype
-from transformers.adapters import PredictionHead
+from transformers import BertPreTrainedModel
+from transformers.adapters import PredictionHead, BertAdapterModel, AdapterConfig
 
 sys.path += ['./']
 import torch
 from torch import nn
 import transformers
-from transformers import BertPreTrainedModel, BertModel, BertAdapterModel
 import torch.nn.functional as F
 from torch.cuda.amp import autocast
+
 
 class EmbeddingMixin:
     """
     Mixin for common functions in most embedding models. Each model should define its own bert-like backbone and forward.
     We inherit from BertModel to use from_pretrained
     """
+
     def __init__(self, model_argobj):
         if model_argobj is None:
             self.use_mean = False
@@ -54,11 +56,11 @@ class BaseModelDot(EmbeddingMixin):
     def _text_encode(self, input_ids, attention_mask):
         # TODO should raise NotImplementedError
         # temporarily do this  
-        return None 
+        return None
 
     def query_emb(self, input_ids, attention_mask):
         outputs1 = self._text_encode(input_ids=input_ids,
-                                attention_mask=attention_mask)
+                                     attention_mask=attention_mask)
         full_emb = self.masked_mean_or_first(outputs1, attention_mask)
         query1 = self.norm(self.embeddingHead(full_emb))
         return query1
@@ -76,6 +78,7 @@ class BaseModelDot(EmbeddingMixin):
 
 class DPRHead(PredictionHead):
     def __init__(self, model, head_name, **kwargs):
+        super().__init__(head_name)
         config = model.config
         if hasattr(config, "output_embedding_size"):
             self.output_embedding_size = config.output_embedding_size
@@ -87,8 +90,7 @@ class DPRHead(PredictionHead):
         self.norm = nn.LayerNorm(self.output_embedding_size)
 
     def forward(self, outputs, cls_output=None, attention_mask=None, return_dict=False, **kwargs):
-        print("i am being used")
-        full_emb = self.masked_mean_or_first(outputs, attention_mask)
+        full_emb = self.model.masked_mean_or_first(outputs, attention_mask)
         head_output = self.norm(self.embeddingHead(full_emb))
         return head_output
 
@@ -96,32 +98,36 @@ class DPRHead(PredictionHead):
 class AdapterBertDot(BaseModelDot, BertAdapterModel):
     def __init__(self, config, model_argobj=None):
         BaseModelDot.__init__(self, model_argobj)
-        BertPreTrainedModel.__init__(self, config)
+        BertAdapterModel.__init__(self, config)
         if int(transformers.__version__[0]) == 4:
             config.return_dict = False
-        self.bert = BertModel(config, add_pooling_layer=False)
+        self.bert = BertAdapterModel(config)
         if hasattr(config, "output_embedding_size"):
             self.output_embedding_size = config.output_embedding_size
         else:
             self.output_embedding_size = config.hidden_size
         print("output_embedding_size", self.output_embedding_size)
 
-        # replace by custom linear head.
-        self.embeddingHead = nn.Linear(config.hidden_size, self.output_embedding_size)
-        self.norm = nn.LayerNorm(self.output_embedding_size)
-        self.apply(self._init_weights)
+        self.task_name = 'dpr'
+
+        self.bert.register_custom_head('dpr-head', DPRHead)
+        self.bert.add_custom_head(head_type='dpr-head', head_name=self.task_name)
+        self.bert.add_adapter(self.task_name, config='pfeiffer')
+        self.bert.train_adapter([self.task_name])
+        self.bert.set_active_adapters([self.task_name])
+        #self.apply(self._init_weights)
 
     def _text_encode(self, input_ids, attention_mask):
         outputs1 = self.bert(input_ids=input_ids,
-                                attention_mask=attention_mask)
+                             attention_mask=attention_mask)
         return outputs1
 
     def query_emb(self, input_ids, attention_mask):
         outputs1 = self._text_encode(input_ids=input_ids,
-                                attention_mask=attention_mask)
-        full_emb = self.masked_mean_or_first(outputs1, attention_mask)
-        #query1 = self.norm(self.embeddingHead(full_emb))
-        query1 = full_emb
+                                     attention_mask=attention_mask)
+        #full_emb = self.masked_mean_or_first(outputs1, attention_mask)
+        # query1 = self.norm(self.embeddingHead(full_emb))
+        query1 = outputs1
         return query1
 
     def body_emb(self, input_ids, attention_mask):
@@ -137,34 +143,33 @@ class AdapterBertDot(BaseModelDot, BertAdapterModel):
 
 class AdapterBertDot_InBatch(AdapterBertDot):
     def forward(self, input_query_ids, query_attention_mask,
-            input_doc_ids, doc_attention_mask, 
-            other_doc_ids=None, other_doc_attention_mask=None,
-            rel_pair_mask=None, hard_pair_mask=None):
+                input_doc_ids, doc_attention_mask,
+                other_doc_ids=None, other_doc_attention_mask=None,
+                rel_pair_mask=None, hard_pair_mask=None):
         return inbatch_train(self.query_emb, self.body_emb,
-            input_query_ids, query_attention_mask,
-            input_doc_ids, doc_attention_mask, 
-            other_doc_ids, other_doc_attention_mask,
-            rel_pair_mask, hard_pair_mask)
+                             input_query_ids, query_attention_mask,
+                             input_doc_ids, doc_attention_mask,
+                             other_doc_ids, other_doc_attention_mask,
+                             rel_pair_mask, hard_pair_mask)
 
 
 class AdapterBertDot_Rand(AdapterBertDot):
     def forward(self, input_query_ids, query_attention_mask,
-            input_doc_ids, doc_attention_mask, 
-            other_doc_ids=None, other_doc_attention_mask=None,
-            rel_pair_mask=None, hard_pair_mask=None):
+                input_doc_ids, doc_attention_mask,
+                other_doc_ids=None, other_doc_attention_mask=None,
+                rel_pair_mask=None, hard_pair_mask=None):
         return randneg_train(self.query_emb, self.body_emb,
-            input_query_ids, query_attention_mask,
-            input_doc_ids, doc_attention_mask, 
-            other_doc_ids, other_doc_attention_mask,
-            hard_pair_mask)
+                             input_query_ids, query_attention_mask,
+                             input_doc_ids, doc_attention_mask,
+                             other_doc_ids, other_doc_attention_mask,
+                             hard_pair_mask)
 
 
 def inbatch_train(query_encode_func, doc_encode_func,
-            input_query_ids, query_attention_mask,
-            input_doc_ids, doc_attention_mask, 
-            other_doc_ids=None, other_doc_attention_mask=None,
-            rel_pair_mask=None, hard_pair_mask=None):
-
+                  input_query_ids, query_attention_mask,
+                  input_doc_ids, doc_attention_mask,
+                  other_doc_ids=None, other_doc_attention_mask=None,
+                  rel_pair_mask=None, hard_pair_mask=None):
     query_embs = query_encode_func(input_query_ids, query_attention_mask)
     doc_embs = doc_encode_func(input_doc_ids, doc_attention_mask)
 
@@ -176,11 +181,11 @@ def inbatch_train(query_encode_func, doc_encode_func,
         # print("positive_scores", positive_scores)
         positive_scores = single_positive_scores.reshape(-1, 1).repeat(1, batch_size).reshape(-1)
         if rel_pair_mask is None:
-            rel_pair_mask = 1 - torch.eye(batch_size, dtype=batch_scores.dtype, device=batch_scores.device)                
-        # print("mask", mask)
+            rel_pair_mask = 1 - torch.eye(batch_size, dtype=batch_scores.dtype, device=batch_scores.device)
+            # print("mask", mask)
         batch_scores = batch_scores.reshape(-1)
         logit_matrix = torch.cat([positive_scores.unsqueeze(1),
-                                batch_scores.unsqueeze(1)], dim=1)  
+                                  batch_scores.unsqueeze(1)], dim=1)
         # print(logit_matrix)
         lsm = F.log_softmax(logit_matrix, dim=1)
         loss = -1.0 * lsm[:, 0] * rel_pair_mask.reshape(-1)
@@ -189,20 +194,20 @@ def inbatch_train(query_encode_func, doc_encode_func,
         first_loss, first_num = loss.sum(), rel_pair_mask.sum()
 
     if other_doc_ids is None:
-        return (first_loss/first_num,)
+        return (first_loss / first_num,)
 
     # other_doc_ids: batch size, per query doc, length
     other_doc_num = other_doc_ids.shape[0] * other_doc_ids.shape[1]
     other_doc_ids = other_doc_ids.reshape(other_doc_num, -1)
     other_doc_attention_mask = other_doc_attention_mask.reshape(other_doc_num, -1)
     other_doc_embs = doc_encode_func(other_doc_ids, other_doc_attention_mask)
-    
+
     with autocast(enabled=False):
         other_batch_scores = torch.matmul(query_embs, other_doc_embs.T)
         other_batch_scores = other_batch_scores.reshape(-1)
         positive_scores = single_positive_scores.reshape(-1, 1).repeat(1, other_doc_num).reshape(-1)
         other_logit_matrix = torch.cat([positive_scores.unsqueeze(1),
-                                other_batch_scores.unsqueeze(1)], dim=1)  
+                                        other_batch_scores.unsqueeze(1)], dim=1)
         # print(logit_matrix)
         other_lsm = F.log_softmax(other_logit_matrix, dim=1)
         other_loss = -1.0 * other_lsm[:, 0]
@@ -214,16 +219,15 @@ def inbatch_train(query_encode_func, doc_encode_func,
             second_loss, second_num = other_loss.sum(), hard_pair_mask.sum()
         else:
             second_loss, second_num = other_loss.sum(), len(other_loss)
-    
-    return ((first_loss+second_loss)/(first_num+second_num),)
+
+    return ((first_loss + second_loss) / (first_num + second_num),)
 
 
 def randneg_train(query_encode_func, doc_encode_func,
-            input_query_ids, query_attention_mask,
-            input_doc_ids, doc_attention_mask, 
-            other_doc_ids=None, other_doc_attention_mask=None,
-            hard_pair_mask=None):
-
+                  input_query_ids, query_attention_mask,
+                  input_doc_ids, doc_attention_mask,
+                  other_doc_ids=None, other_doc_attention_mask=None,
+                  hard_pair_mask=None):
     query_embs = query_encode_func(input_query_ids, query_attention_mask)
     doc_embs = doc_encode_func(input_doc_ids, doc_attention_mask)
 
@@ -235,13 +239,13 @@ def randneg_train(query_encode_func, doc_encode_func,
     other_doc_ids = other_doc_ids.reshape(other_doc_num, -1)
     other_doc_attention_mask = other_doc_attention_mask.reshape(other_doc_num, -1)
     other_doc_embs = doc_encode_func(other_doc_ids, other_doc_attention_mask)
-    
+
     with autocast(enabled=False):
         other_batch_scores = torch.matmul(query_embs, other_doc_embs.T)
         other_batch_scores = other_batch_scores.reshape(-1)
         positive_scores = single_positive_scores.reshape(-1, 1).repeat(1, other_doc_num).reshape(-1)
         other_logit_matrix = torch.cat([positive_scores.unsqueeze(1),
-                                other_batch_scores.unsqueeze(1)], dim=1)  
+                                        other_batch_scores.unsqueeze(1)], dim=1)
         # print(logit_matrix)
         other_lsm = F.log_softmax(other_logit_matrix, dim=1)
         other_loss = -1.0 * other_lsm[:, 0]
@@ -251,4 +255,4 @@ def randneg_train(query_encode_func, doc_encode_func,
             second_loss, second_num = other_loss.sum(), hard_pair_mask.sum()
         else:
             second_loss, second_num = other_loss.sum(), len(other_loss)
-    return (second_loss/second_num,)
+    return (second_loss / second_num,)
