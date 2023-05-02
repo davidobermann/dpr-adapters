@@ -230,10 +230,6 @@ def main():
         config=config,
     )
 
-    model.add_custom_head('dpr-head', model.task_name)
-    model.train_adapter([model.task_name])
-    model.set_active_adapters([model.task_name])
-
     # training_args.set_dataloader(num_workers=8)
     # training_args.set_dataloader(train_batch_size=training_args.batch_size, num_workers=training_args.workers)
 

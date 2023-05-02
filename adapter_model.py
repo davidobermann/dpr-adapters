@@ -77,20 +77,31 @@ class BaseModelDot(EmbeddingMixin):
 
 
 class DPRHead(PredictionHead):
-    def __init__(self, model, head_name, **kwargs):
+    def __init__(self, model, head_name, output_embed_size, hiddensize, use_mean, **kwargs):
         super().__init__(head_name)
-        config = model.config
-        if hasattr(config, "output_embedding_size"):
-            self.output_embedding_size = config.output_embedding_size
-        else:
-            self.output_embedding_size = config.hidden_size
-        print("output_embedding_size", self.output_embedding_size)
+        self.output_embed_size = output_embed_size
+        self.hiddensize = hiddensize
+        self.use_mean = use_mean
 
-        self.embeddingHead = nn.Linear(config.hidden_size, self.output_embedding_size)
-        self.norm = nn.LayerNorm(self.output_embedding_size)
+        self.embeddingHead = nn.Linear(hiddensize, output_embed_size)
+        self.norm = nn.LayerNorm(output_embed_size)
+
+
+    def masked_mean(self, t, mask):
+        s = torch.sum(t * mask.unsqueeze(-1).float(), axis=1)
+        d = mask.sum(axis=1, keepdim=True).float()
+        return s / d
+
+    def masked_mean_or_first(self, emb_all, mask):
+        # emb_all is a tuple from bert - sequence output, pooler
+        assert isinstance(emb_all, tuple)
+        if self.use_mean:
+            return self.masked_mean(emb_all[0], mask)
+        else:
+            return emb_all[0][:, 0]
 
     def forward(self, outputs, cls_output=None, attention_mask=None, return_dict=False, **kwargs):
-        full_emb = self.model.masked_mean_or_first(outputs, attention_mask)
+        full_emb = self.masked_mean_or_first(outputs, attention_mask)
         head_output = self.norm(self.embeddingHead(full_emb))
         return head_output
 
@@ -111,10 +122,13 @@ class AdapterBertDot(BaseModelDot, BertAdapterModel):
         self.task_name = 'dpr'
 
         self.bert.register_custom_head('dpr-head', DPRHead)
-        self.bert.add_custom_head(head_type='dpr-head', head_name=self.task_name)
+        self.bert.add_custom_head(head_type='dpr-head', head_name=self.task_name,
+                                  output_embed_size=self.output_embedding_size,
+                                  hiddensize=config.hidden_size, use_mean=self.use_mean)
         self.bert.add_adapter(self.task_name, config='pfeiffer')
         self.bert.train_adapter([self.task_name])
         self.bert.set_active_adapters([self.task_name])
+        self.bert.freeze_model(freeze=True)
         #self.apply(self._init_weights)
 
     def _text_encode(self, input_ids, attention_mask):
