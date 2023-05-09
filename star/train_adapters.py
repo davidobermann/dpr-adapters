@@ -1,14 +1,18 @@
 # coding=utf-8
 import imp
 import sys
+from typing import Optional
+
+from transformers.adapters.utils import WEIGHTS_NAME
+from transformers.modeling_utils import unwrap_model
+import torch
+
 sys.path.append("./")
 
-from torch.utils.data import DataLoader
 from transformers.adapters import AdapterTrainer
 
 from adapter_model import AdapterBertDot_InBatch, DPRHead
 
-from model import BertDot_InBatch
 import logging
 import os
 from dataclasses import dataclass, field
@@ -16,7 +20,7 @@ import transformers
 from transformers import (
     HfArgumentParser,
     TrainingArguments,
-    set_seed, BertTokenizer, BertConfig, AdapterArguments,
+    set_seed, BertTokenizer, BertConfig, AdapterArguments, PreTrainedModel,
 )
 from transformers.integrations import TensorBoardCallback
 from dataset import TextTokenIdsCache, load_rel
@@ -51,6 +55,39 @@ class MyTrainerCallback(TrainerCallback):
 
 
 class AdapterDRTrainer(AdapterTrainer):
+
+    #ovveride the save to ensure saving the head as well
+    def _save(self, output_dir: Optional[str] = None, state_dict=None):
+        # If we are executing this function, we are the process zero, so we don't check for that.
+        output_dir = output_dir if output_dir is not None else self.args.output_dir
+        os.makedirs(output_dir, exist_ok=True)
+        logger.info(f"Saving model checkpoint to {output_dir}")
+        # Save a trained model and configuration using `save_pretrained()`.
+        # They can then be reloaded using `from_pretrained()`
+        if not isinstance(self.model, PreTrainedModel):
+            if isinstance(unwrap_model(self.model), PreTrainedModel):
+                if state_dict is None:
+                    state_dict = self.model.state_dict()
+                unwrap_model(self.model).save_pretrained(output_dir, state_dict=state_dict)
+            else:
+                logger.info("Trainer.model is not a `PreTrainedModel`, only saving its state dict.")
+                if state_dict is None:
+                    state_dict = self.model.state_dict()
+                torch.save(state_dict, os.path.join(output_dir, WEIGHTS_NAME))
+        else:
+            print(f"Adapter is beeing saved as checkpoint to {output_dir}")
+            self.model.save_all_adapters(output_dir, with_head=False)
+            if self.train_adapter_fusion:
+                self.model.save_all_adapter_fusions(output_dir)
+            if hasattr(self.model, "heads"):
+                print(f"Head is beeing saved as checkpoint to {output_dir}")
+                #self.model.save_all_heads(os.path.join(output_dir, 'heads'))
+                self.model.bert.save_head(os.path.join(output_dir, 'head'), 'dpr')
+        if self.tokenizer is not None:
+            self.tokenizer.save_pretrained(output_dir)
+
+        # Good practice: save your training arguments together with the trained model
+        torch.save(self.args, os.path.join(output_dir, "training_args.bin"))
 
     def create_optimizer_and_scheduler(self, num_training_steps: int):
         """
@@ -228,6 +265,7 @@ def main():
     model = model_class.from_pretrained(
         model_args.init_path,
         config=config,
+        adapter_path=None
     )
 
     # training_args.set_dataloader(num_workers=8)

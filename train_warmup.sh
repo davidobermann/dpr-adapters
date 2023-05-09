@@ -1,10 +1,11 @@
 python ./star/train_warmup.py --do_train \
+    --init_path prajjwal1/bert-tiny \
     --max_query_length 24 \
     --max_doc_length 120 \
-    --workers 4 \
-    --batch_size 1024 \
-    --preprocess_dir ../dataset/bert \
-    --output_dir ./data/warmup_exp/model \
+    --workers 12 \
+    --batch_size 512 \
+    --preprocess_dir ./dataset/bert \
+    --output_dir ./data/warmup_exp_small/model \
     --logging_dir ./data/warmup_exp/log \
     --optimizer_str lamb \
     --learning_rate 1e-4 \

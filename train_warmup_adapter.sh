@@ -2,7 +2,9 @@ python ./star/train_adapters.py --do_train \
     --max_query_length 24 \
     --max_doc_length 120 \
     --workers 4 \
+    --per_device_train_batch_size 512 \
     --batch_size 512 \
+    --save_steps 100 \
     --preprocess_dir ../dataset/bert \
     --output_dir ./data/adapters/model \
     --logging_dir ./data/adapters/log \

@@ -84,7 +84,7 @@ class BertDot(BaseModelDot, BertPreTrainedModel):
         else:
             self.output_embedding_size = config.hidden_size
         print("output_embedding_size", self.output_embedding_size)
-
+        
         self.embeddingHead = nn.Linear(config.hidden_size, self.output_embedding_size)
         self.norm = nn.LayerNorm(self.output_embedding_size)
         self.apply(self._init_weights)

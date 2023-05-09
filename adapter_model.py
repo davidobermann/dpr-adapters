@@ -1,4 +1,5 @@
 import enum
+import os
 import sys
 from torch._C import dtype
 from transformers import BertPreTrainedModel
@@ -77,15 +78,22 @@ class BaseModelDot(EmbeddingMixin):
 
 
 class DPRHead(PredictionHead):
-    def __init__(self, model, head_name, output_embed_size, hiddensize, use_mean, **kwargs):
+    #def __init__(self, model, head_name, output_embed_size, hiddensize, use_mean, **kwargs):
+    def __init__(self, model, head_name, **kwargs):
         super().__init__(head_name)
-        self.output_embed_size = output_embed_size
-        self.hiddensize = hiddensize
-        self.use_mean = use_mean
 
-        self.embeddingHead = nn.Linear(hiddensize, output_embed_size)
-        self.norm = nn.LayerNorm(output_embed_size)
+        config = model.config
 
+        if hasattr(config, "output_embedding_size"):
+            self.output_embedding_size = config.output_embedding_size
+        else:
+            self.output_embedding_size = config.hidden_size
+
+        self.hiddensize = config.hidden_size
+        self.use_mean = False
+
+        self.embeddingHead = nn.Linear(self.hiddensize, self.output_embedding_size)
+        self.norm = nn.LayerNorm(self.output_embedding_size)
 
     def masked_mean(self, t, mask):
         s = torch.sum(t * mask.unsqueeze(-1).float(), axis=1)
@@ -107,7 +115,7 @@ class DPRHead(PredictionHead):
 
 
 class AdapterBertDot(BaseModelDot, BertAdapterModel):
-    def __init__(self, config, model_argobj=None):
+    def __init__(self, config, model_argobj=None, adapter_path=None):
         BaseModelDot.__init__(self, model_argobj)
         BertAdapterModel.__init__(self, config)
         if int(transformers.__version__[0]) == 4:
@@ -121,14 +129,25 @@ class AdapterBertDot(BaseModelDot, BertAdapterModel):
 
         self.task_name = 'dpr'
 
-        self.bert.register_custom_head('dpr-head', DPRHead)
-        self.bert.add_custom_head(head_type='dpr-head', head_name=self.task_name,
-                                  output_embed_size=self.output_embedding_size,
-                                  hiddensize=config.hidden_size, use_mean=self.use_mean)
-        self.bert.add_adapter(self.task_name, config='pfeiffer')
-        self.bert.train_adapter([self.task_name])
-        self.bert.set_active_adapters([self.task_name])
-        self.bert.freeze_model(freeze=True)
+        if adapter_path == None:
+            print('using training mode')
+            self.bert.register_custom_head('dpr-head', DPRHead)
+            self.bert.add_custom_head(head_type='dpr-head', head_name=self.task_name)
+            self.bert.add_adapter(self.task_name, config='pfeiffer')
+            self.bert.train_adapter([self.task_name])
+            self.bert.set_active_adapters([self.task_name])
+            self.bert.active_head = self.task_name
+            self.bert.freeze_model(freeze=True)
+
+        else:
+            print('using inference mode')
+            self.bert.register_custom_head('dpr-head', DPRHead)
+            name = self.bert.load_adapter(adapter_path)
+            headpath = os.path.join(adapter_path, '../head')
+            self.bert.load_head(headpath, load_as=self.task_name)
+            self.bert.active_head = self.task_name
+            self.bert.set_active_adapters([name])
+
         #self.apply(self._init_weights)
 
     def _text_encode(self, input_ids, attention_mask):
