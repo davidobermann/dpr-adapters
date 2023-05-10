@@ -1,0 +1,24 @@
+Bert-tiny, batchsize 512, 10k steps, 35 min:
+#####################
+MRR @10: 0.14024781689180013
+QueriesRanked: 6980
+#####################
+
+Bert-tiny, batchsize 256, 100k steps, 4h:
+#####################
+MRR @10: 0.17544054441260729
+QueriesRanked: 6980
+#####################
+
+Bert-mini, batchsize 256, 20k steps, 2h37m:
+#####################
+MRR @10: 0.18919890162368644
+QueriesRanked: 6980
+#####################
+
+bert-small, batchsize 256, 10k steps, 7,5h:
+#####################
+MRR @10: 0.21461090644471695
+QueriesRanked: 6980
+#####################
+
