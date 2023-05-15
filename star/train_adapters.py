@@ -8,10 +8,10 @@ from transformers.modeling_utils import unwrap_model
 import torch
 
 sys.path.append("./")
-
+from model import BertDot_InBatch
 from transformers.adapters import AdapterTrainer
 
-from adapter_model import AdapterBertDot_InBatch, DPRHead
+from adapter_model import AdapterBertDot_InBatch
 
 import logging
 import os
@@ -81,13 +81,53 @@ class AdapterDRTrainer(AdapterTrainer):
                 self.model.save_all_adapter_fusions(output_dir)
             if hasattr(self.model, "heads"):
                 print(f"Head is beeing saved as checkpoint to {output_dir}")
-                #self.model.save_all_heads(os.path.join(output_dir, 'heads'))
                 self.model.bert.save_head(os.path.join(output_dir, 'head'), 'dpr')
         if self.tokenizer is not None:
             self.tokenizer.save_pretrained(output_dir)
 
         # Good practice: save your training arguments together with the trained model
         torch.save(self.args, os.path.join(output_dir, "training_args.bin"))
+
+    def create_optimizer_and_scheduler(self, num_training_steps: int):
+        """
+        Setup the optimizer and the learning rate scheduler.
+
+        We provide a reasonable default that works well. If you want to use something else, you can pass a tuple in the
+        Trainer's init through :obj:`optimizers`, or subclass and override this method in a subclass.
+        """
+        if self.optimizer is None:
+            no_decay = ["bias", "LayerNorm.weight"]
+            optimizer_grouped_parameters = [
+                {
+                    "params": [p for n, p in self.model.named_parameters() if not any(nd in n for nd in no_decay)],
+                    "weight_decay": self.args.weight_decay,
+                },
+                {
+                    "params": [p for n, p in self.model.named_parameters() if any(nd in n for nd in no_decay)],
+                    "weight_decay": 0.0,
+                },
+            ]
+            if self.args.optimizer_str == "adamw":
+                self.optimizer = AdamW(
+                    optimizer_grouped_parameters,
+                    lr=self.args.learning_rate,
+                    betas=(self.args.adam_beta1, self.args.adam_beta2),
+                    eps=self.args.adam_epsilon,
+                )
+            elif self.args.optimizer_str == "lamb":
+                self.optimizer = Lamb(
+                    optimizer_grouped_parameters,
+                    lr=self.args.learning_rate,
+                    eps=self.args.adam_epsilon
+                )
+            else:
+                raise NotImplementedError("Optimizer must be adamw or lamb")
+        if self.lr_scheduler is None:
+            self.lr_scheduler = get_linear_schedule_with_warmup(
+                self.optimizer, num_warmup_steps=self.args.warmup_steps, num_training_steps=num_training_steps
+            )
+
+class DRTrainer(Trainer):
 
     def create_optimizer_and_scheduler(self, num_training_steps: int):
         """
@@ -268,8 +308,8 @@ def main():
         adapter_path=None
     )
 
-    # training_args.set_dataloader(num_workers=8)
-    # training_args.set_dataloader(train_batch_size=training_args.batch_size, num_workers=training_args.workers)
+    #training_args.set_dataloader(num_workers=8)
+    #training_args.set_dataloader(train_batch_size=training_args.batch_size, num_workers=training_args.workers)
 
     # Initialize our Trainer
     trainer = AdapterDRTrainer(

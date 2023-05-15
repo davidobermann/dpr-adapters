@@ -2,7 +2,7 @@ import enum
 import os
 import sys
 from torch._C import dtype
-from transformers import BertPreTrainedModel
+from transformers import BertPreTrainedModel, PfeifferConfig, DistilBertAdapterModel, ParallelConfig
 from transformers.adapters import PredictionHead, BertAdapterModel, AdapterConfig
 
 sys.path += ['./']
@@ -78,7 +78,6 @@ class BaseModelDot(EmbeddingMixin):
 
 
 class DPRHead(PredictionHead):
-    #def __init__(self, model, head_name, output_embed_size, hiddensize, use_mean, **kwargs):
     def __init__(self, model, head_name, **kwargs):
         super().__init__(head_name)
 
@@ -90,26 +89,15 @@ class DPRHead(PredictionHead):
             self.output_embedding_size = config.hidden_size
 
         self.hiddensize = config.hidden_size
-        self.use_mean = False
 
         self.embeddingHead = nn.Linear(self.hiddensize, self.output_embedding_size)
         self.norm = nn.LayerNorm(self.output_embedding_size)
 
-    def masked_mean(self, t, mask):
-        s = torch.sum(t * mask.unsqueeze(-1).float(), axis=1)
-        d = mask.sum(axis=1, keepdim=True).float()
-        return s / d
-
-    def masked_mean_or_first(self, emb_all, mask):
-        # emb_all is a tuple from bert - sequence output, pooler
-        assert isinstance(emb_all, tuple)
-        if self.use_mean:
-            return self.masked_mean(emb_all[0], mask)
-        else:
-            return emb_all[0][:, 0]
+    def first(self, emb_all):
+        return emb_all[0][:, 0]
 
     def forward(self, outputs, cls_output=None, attention_mask=None, return_dict=False, **kwargs):
-        full_emb = self.masked_mean_or_first(outputs, attention_mask)
+        full_emb = self.first(outputs)
         head_output = self.norm(self.embeddingHead(full_emb))
         return head_output
 
@@ -131,13 +119,14 @@ class AdapterBertDot(BaseModelDot, BertAdapterModel):
 
         if adapter_path == None:
             print('using training mode')
-            self.bert.register_custom_head('dpr-head', DPRHead)
-            self.bert.add_custom_head(head_type='dpr-head', head_name=self.task_name)
             self.bert.add_adapter(self.task_name, config='pfeiffer')
             self.bert.train_adapter([self.task_name])
-            self.bert.set_active_adapters([self.task_name])
-            self.bert.active_head = self.task_name
             self.bert.freeze_model(freeze=True)
+            self.bert.register_custom_head('dpr-head', DPRHead)
+            self.bert.add_custom_head(head_type='dpr-head', head_name=self.task_name)
+            self.bert.active_head = self.task_name
+            print(self.adapter_summary())
+            print(self.bert.heads)
 
         else:
             print('using inference mode')
@@ -158,8 +147,6 @@ class AdapterBertDot(BaseModelDot, BertAdapterModel):
     def query_emb(self, input_ids, attention_mask):
         outputs1 = self._text_encode(input_ids=input_ids,
                                      attention_mask=attention_mask)
-        #full_emb = self.masked_mean_or_first(outputs1, attention_mask)
-        # query1 = self.norm(self.embeddingHead(full_emb))
         query1 = outputs1
         return query1
 
@@ -172,7 +159,6 @@ class AdapterBertDot(BaseModelDot, BertAdapterModel):
             return self.query_emb(input_ids, attention_mask)
         else:
             return self.body_emb(input_ids, attention_mask)
-
 
 class AdapterBertDot_InBatch(AdapterBertDot):
     def forward(self, input_query_ids, query_attention_mask,

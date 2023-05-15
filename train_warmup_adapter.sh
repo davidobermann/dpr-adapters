@@ -1,13 +1,14 @@
 python ./star/train_adapters.py --do_train \
+    --init_path prajjwal1/bert-tiny \
     --max_query_length 24 \
     --max_doc_length 120 \
-    --workers 4 \
+    --dataloader_num_workers 8 \
     --per_device_train_batch_size 512 \
     --batch_size 512 \
-    --save_steps 100 \
-    --preprocess_dir ../dataset/bert \
-    --output_dir ./data/adapters/model \
-    --logging_dir ./data/adapters/log \
+    --save_steps 1000 \
+    --preprocess_dir ./dataset/bert \
+    --output_dir ./data/adapters/tiny/model \
+    --logging_dir ./data/adapters/tiny/log \
     --optimizer_str lamb \
     --learning_rate 1e-4 \
     --fp16 \
