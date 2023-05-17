@@ -12,5 +12,4 @@ python ./star/train_adapters.py --do_train \
     --optimizer_str lamb \
     --learning_rate 1e-4 \
     --fp16 \
-    --train_adapter \
-    --overwrite_output_dir
+    --train_adapter

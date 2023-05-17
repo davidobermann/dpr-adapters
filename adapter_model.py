@@ -119,14 +119,18 @@ class AdapterBertDot(BaseModelDot, BertAdapterModel):
 
         if adapter_path == None:
             print('using training mode')
+            self.bert.freeze_model(freeze=True)
             self.bert.add_adapter(self.task_name, config='pfeiffer')
             self.bert.train_adapter([self.task_name])
-            self.bert.freeze_model(freeze=True)
             self.bert.register_custom_head('dpr-head', DPRHead)
             self.bert.add_custom_head(head_type='dpr-head', head_name=self.task_name)
             self.bert.active_head = self.task_name
             print(self.adapter_summary())
             print(self.bert.heads)
+
+            #check if all the right things a frozen or unfrozen:
+            for (n,p) in self.bert.named_parameters():
+                print(n, p.requires_grad)
 
         else:
             print('using inference mode')
