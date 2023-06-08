@@ -89,6 +89,15 @@ class BertDot(BaseModelDot, BertPreTrainedModel):
         self.norm = nn.LayerNorm(self.output_embedding_size)
         self.apply(self._init_weights)
 
+        for (n, p) in self.named_parameters():
+            print(n, p.requires_grad)
+
+        for (n, p) in self.bert.named_parameters():
+            p.requires_grad = False
+
+        for (n, p) in self.named_parameters():
+            print(n, p.requires_grad)
+
     def _text_encode(self, input_ids, attention_mask):
         outputs1 = self.bert(input_ids=input_ids,
                                 attention_mask=attention_mask)

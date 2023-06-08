@@ -121,8 +121,9 @@ class MyTrainingArguments(TrainingArguments):
     overwrite_output_dir: bool = field(default=False)
     batch_size: int = field(default=256, metadata={"help": "Batch size for training."})
     workers: int = field(default=4, metadata={"help": "Number of Dataloader workers."})
-    #per_device_train_batch_size: int = field(
-    #    default=256, metadata={"help": "Batch size per GPU/TPU core/CPU for training."})
+    per_device_train_batch_size: int = field(
+        default=256, metadata={"help": "Batch size per GPU/TPU core/CPU for training."})
+    dataloader_num_workers: int = field(default=8)
     gradient_accumulation_steps: int = field(
         default=1,
         metadata={"help": "Number of updates steps to accumulate before performing a backward/update pass."},)
@@ -227,7 +228,7 @@ def main():
     )
 
     #training_args.set_dataloader(num_workers=8)
-    training_args.set_dataloader(train_batch_size=training_args.batch_size, num_workers=training_args.workers)
+    #training_args.set_dataloader(train_batch_size=training_args.batch_size, num_workers=training_args.workers)
 
     # Initialize our Trainer
     trainer = DRTrainer(

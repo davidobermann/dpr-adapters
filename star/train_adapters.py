@@ -56,7 +56,7 @@ class MyTrainerCallback(TrainerCallback):
 
 class AdapterDRTrainer(AdapterTrainer):
 
-    #ovveride the save to ensure saving the head as well
+    # ovveride the save to ensure saving the head as well
     def _save(self, output_dir: Optional[str] = None, state_dict=None):
         # If we are executing this function, we are the process zero, so we don't check for that.
         output_dir = output_dir if output_dir is not None else self.args.output_dir
@@ -82,6 +82,11 @@ class AdapterDRTrainer(AdapterTrainer):
             if hasattr(self.model, "heads"):
                 print(f"Head is beeing saved as checkpoint to {output_dir}")
                 self.model.bert.save_head(os.path.join(output_dir, 'head'), 'dpr')
+                print('adapter_weights:')
+                for (n, p) in self.model.bert.named_parameters():
+                    if 'adapter' in n and p.requires_grad == True:
+                        print(n)
+                        print(p.mean().item())
         if self.tokenizer is not None:
             self.tokenizer.save_pretrained(output_dir)
 
@@ -127,6 +132,7 @@ class AdapterDRTrainer(AdapterTrainer):
                 self.optimizer, num_warmup_steps=self.args.warmup_steps, num_training_steps=num_training_steps
             )
 
+
 class DRTrainer(Trainer):
 
     def create_optimizer_and_scheduler(self, num_training_steps: int):
@@ -170,8 +176,25 @@ class DRTrainer(Trainer):
 
 
 class MyTensorBoardCallback(TensorBoardCallback):
+
     def on_train_begin(self, args, state, control, **kwargs):
         pass
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        super().on_log(args, state, control, logs, **kwargs)
+
+        if self.tb_writer is None:
+            self._init_summary_writer(args)
+
+        if self.tb_writer is not None:
+            if "model" in kwargs:
+                model = kwargs["model"]
+                for (n, p) in model.bert.named_parameters():
+                    if 'adapter' in n or 'dpr' in n:
+                        #self.tb_writer.add_scalar(n + '_mean', p.mean().item(), state.global_step)
+                        self.tb_writer.add_histogram(n, p, state.global_step)
+
+            self.tb_writer.flush()
 
 
 def is_main_process(local_rank):
@@ -308,8 +331,8 @@ def main():
         adapter_path=None
     )
 
-    #training_args.set_dataloader(num_workers=8)
-    #training_args.set_dataloader(train_batch_size=training_args.batch_size, num_workers=training_args.workers)
+    # training_args.set_dataloader(num_workers=8)
+    # training_args.set_dataloader(train_batch_size=training_args.batch_size, num_workers=training_args.workers)
 
     # Initialize our Trainer
     trainer = AdapterDRTrainer(
