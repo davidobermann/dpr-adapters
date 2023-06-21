@@ -84,24 +84,33 @@ class BertDot(BaseModelDot, BertPreTrainedModel):
         else:
             self.output_embedding_size = config.hidden_size
         print("output_embedding_size", self.output_embedding_size)
-        
-        self.embeddingHead = nn.Linear(config.hidden_size, self.output_embedding_size)
-        self.norm = nn.LayerNorm(self.output_embedding_size)
-        self.apply(self._init_weights)
 
         for (n, p) in self.named_parameters():
             print(n, p.requires_grad)
 
-        for (n, p) in self.bert.named_parameters():
-            p.requires_grad = False
-
-        for (n, p) in self.named_parameters():
-            print(n, p.requires_grad)
+    def first(self, emb_all):
+        return emb_all[0][:, 0]
 
     def _text_encode(self, input_ids, attention_mask):
         outputs1 = self.bert(input_ids=input_ids,
-                                attention_mask=attention_mask)
-        return outputs1
+                             attention_mask=attention_mask)
+        return self.first(outputs1)
+
+    def query_emb(self, input_ids, attention_mask):
+        outputs1 = self._text_encode(input_ids=input_ids,
+                                     attention_mask=attention_mask)
+        query1 = outputs1
+        return query1
+
+    def body_emb(self, input_ids, attention_mask):
+        return self.query_emb(input_ids, attention_mask)
+
+    def forward(self, input_ids, attention_mask, is_query, *args):
+        assert len(args) == 0
+        if is_query:
+            return self.query_emb(input_ids, attention_mask)
+        else:
+            return self.body_emb(input_ids, attention_mask)
 
 
 class BertDot_InBatch(BertDot):

@@ -326,11 +326,11 @@ class AdapterBertDot(BaseModelDot, BertAdapterModel):
             adapter_config = PfeifferConfig(reduction_factor=1)
             self.bert.add_adapter(self.task_name, config=adapter_config)
             self.bert.train_adapter([self.task_name])
-            self.bert.register_custom_head('dpr-head', DPRHead)
-            self.bert.add_custom_head(head_type='dpr-head', head_name=self.task_name)
-            self.bert.active_head = self.task_name
+            #self.bert.register_custom_head('dpr-head', DPRHead)
+            #self.bert.add_custom_head(head_type='dpr-head', head_name=self.task_name)
+            #self.bert.active_head = self.task_name
             print(self.adapter_summary())
-            print(self.bert.heads)
+            #print(self.bert.heads)
 
             #self.embeddingHead = nn.Linear(self.output_embedding_size, self.output_embedding_size)
             #self.norm = nn.LayerNorm(self.output_embedding_size)
@@ -339,17 +339,13 @@ class AdapterBertDot(BaseModelDot, BertAdapterModel):
             for (n,p) in self.named_parameters():
                 print(n, p.requires_grad)
 
+            self.init_weights()
+
         else:
             print('using inference mode')
-            self.bert.register_custom_head('dpr-head', DPRHead)
             name = self.bert.load_adapter(adapter_path)
-            headpath = os.path.join(adapter_path, '../head')
-            self.bert.load_head(headpath, load_as=self.task_name)
-            self.bert.active_head = self.task_name
             self.bert.set_active_adapters([name])
 
-        #self.apply(self._init_weights)
-        self.init_weights()
 
     def first(self, emb_all):
         return emb_all[0][:, 0]
@@ -358,7 +354,7 @@ class AdapterBertDot(BaseModelDot, BertAdapterModel):
         outputs1 = self.bert(input_ids=input_ids,
                              attention_mask=attention_mask)
         #outputs1 = self.norm(self.embeddingHead(self.first(outputs1)))
-        return outputs1
+        return self.first(outputs1)
 
     def query_emb(self, input_ids, attention_mask):
         outputs1 = self._text_encode(input_ids=input_ids,

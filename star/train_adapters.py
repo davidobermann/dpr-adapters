@@ -81,7 +81,7 @@ class AdapterDRTrainer(AdapterTrainer):
                 self.model.save_all_adapter_fusions(output_dir)
             if hasattr(self.model, "heads"):
                 print(f"Head is beeing saved as checkpoint to {output_dir}")
-                self.model.bert.save_head(os.path.join(output_dir, 'head'), 'dpr')
+                #self.model.bert.save_head(os.path.join(output_dir, 'head'), 'dpr')
                 print('adapter_weights:')
                 for (n, p) in self.model.bert.named_parameters():
                     if 'adapter' in n and p.requires_grad == True:

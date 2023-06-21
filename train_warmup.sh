@@ -3,10 +3,12 @@ python ./star/train_warmup.py --do_train \
     --max_query_length 24 \
     --max_doc_length 120 \
     --workers 12 \
+    --dataloader_num_workers 12 \
+    --per_device_train_batch_size 512 \
     --batch_size 512 \
     --preprocess_dir ./dataset/bert \
-    --output_dir ./data/warmup_exp_small/model \
-    --logging_dir ./data/warmup_exp/log \
+    --output_dir ./data/tiny_nohead/model \
+    --logging_dir ./data/tiny_nohead/log \
     --optimizer_str lamb \
     --learning_rate 1e-4 \
     --fp16 \

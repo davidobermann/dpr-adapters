@@ -120,10 +120,10 @@ class MyTrainingArguments(TrainingArguments):
     optimizer_str: str = field(default="lamb") # or lamb
     overwrite_output_dir: bool = field(default=False)
     batch_size: int = field(default=256, metadata={"help": "Batch size for training."})
-    workers: int = field(default=4, metadata={"help": "Number of Dataloader workers."})
+    workers: int = field(default=12, metadata={"help": "Number of Dataloader workers."})
     per_device_train_batch_size: int = field(
         default=256, metadata={"help": "Batch size per GPU/TPU core/CPU for training."})
-    dataloader_num_workers: int = field(default=8)
+    dataloader_num_workers: int = field(default=12)
     gradient_accumulation_steps: int = field(
         default=1,
         metadata={"help": "Number of updates steps to accumulate before performing a backward/update pass."},)
