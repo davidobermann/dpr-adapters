@@ -306,6 +306,7 @@ class BertAdapterModel(EmbeddingAdaptersWrapperMixin, ModelWithFlexibleHeadsAdap
 class AdapterBertDot(BaseModelDot, BertAdapterModel):
     def __init__(self, config, model_argobj=None, adapter_path=None):
         BaseModelDot.__init__(self, model_argobj)
+        #BertPreTrainedModel.__init__(self, config)
         BertAdapterModel.__init__(self, config)
         if int(transformers.__version__[0]) == 4:
             config.return_dict = False
@@ -326,14 +327,7 @@ class AdapterBertDot(BaseModelDot, BertAdapterModel):
             adapter_config = PfeifferConfig(reduction_factor=1)
             self.bert.add_adapter(self.task_name, config=adapter_config)
             self.bert.train_adapter([self.task_name])
-            #self.bert.register_custom_head('dpr-head', DPRHead)
-            #self.bert.add_custom_head(head_type='dpr-head', head_name=self.task_name)
-            #self.bert.active_head = self.task_name
-            print(self.adapter_summary())
-            #print(self.bert.heads)
-
-            #self.embeddingHead = nn.Linear(self.output_embedding_size, self.output_embedding_size)
-            #self.norm = nn.LayerNorm(self.output_embedding_size)
+            print(self.bert.adapter_summary())
 
             #check if all the right things a frozen or unfrozen:
             for (n,p) in self.named_parameters():
@@ -344,8 +338,14 @@ class AdapterBertDot(BaseModelDot, BertAdapterModel):
         else:
             print('using inference mode')
             name = self.bert.load_adapter(adapter_path)
+            print(name)
             self.bert.set_active_adapters([name])
+            print(self.bert.adapter_summary())
 
+            self.bert.train_adapter([name])
+
+            for (n,p) in self.bert.named_parameters():
+                print(n, p.requires_grad)
 
     def first(self, emb_all):
         return emb_all[0][:, 0]
@@ -371,6 +371,7 @@ class AdapterBertDot(BaseModelDot, BertAdapterModel):
             return self.query_emb(input_ids, attention_mask)
         else:
             return self.body_emb(input_ids, attention_mask)
+
 
 class AdapterBertDot_InBatch(AdapterBertDot):
     def forward(self, input_query_ids, query_attention_mask,

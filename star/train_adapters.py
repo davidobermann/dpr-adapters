@@ -211,6 +211,7 @@ class DataTrainingArguments:
 
 @dataclass
 class ModelArguments:
+    adapter_path: str = field(default=None)
     init_path: str = field(default='prajjwal1/bert-tiny')  # please use bm25 warmup model or roberta-base
     # gradient_checkpointing: bool = field(default=False)
 
@@ -328,7 +329,8 @@ def main():
     model = model_class.from_pretrained(
         model_args.init_path,
         config=config,
-        adapter_path=None
+        #adapter_path=None
+        adapter_path=model_args.adapter_path
     )
 
     # training_args.set_dataloader(num_workers=8)

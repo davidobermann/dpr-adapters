@@ -24,6 +24,10 @@ from retrieve_utils import (
 )
 logger = logging.Logger(__name__)
 
+# in case too many files open:
+#import torch.multiprocessing
+#torch.multiprocessing.set_sharing_strategy('file_system')
+
 
 def prediction(model, data_collator, args, test_dataset, embedding_memmap, ids_memmap, is_query):
     os.makedirs(args.output_dir, exist_ok=True)
@@ -33,7 +37,7 @@ def prediction(model, data_collator, args, test_dataset, embedding_memmap, ids_m
         batch_size=args.eval_batch_size*args.n_gpu,
         collate_fn=data_collator,
         drop_last=False,
-        num_workers=128
+        num_workers=12
     )
     # multi-gpu eval
     if args.n_gpu > 1:

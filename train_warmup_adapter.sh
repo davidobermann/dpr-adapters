@@ -1,5 +1,6 @@
 python ./star/train_adapters.py --do_train \
     --init_path prajjwal1/bert-tiny \
+    --adapter_path ./data/adapters/tiny/model/checkpoint-4000/dpr\
     --max_query_length 24 \
     --max_doc_length 120 \
     --dataloader_num_workers 8 \
@@ -7,8 +8,8 @@ python ./star/train_adapters.py --do_train \
     --batch_size 512 \
     --save_steps 200 \
     --preprocess_dir ./dataset/bert \
-    --output_dir ./data/adapters/tiny/model \
-    --logging_dir ./data/adapters/tiny/log \
+    --output_dir ./data/trash \
+    --logging_dir ./data/trash/log \
     --optimizer_str lamb \
     --learning_rate 1e-3 \
     --weight_decay 1e-4 \
