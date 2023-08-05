@@ -110,6 +110,7 @@ class BertAdapterModel(EmbeddingAdaptersWrapperMixin, ModelWithFlexibleHeadsAdap
     def __init__(self, config):
         super().__init__(config)
 
+        # rewritten class to remove pooling layer
         self.bert = BertModel(config, add_pooling_layer=False)
 
         self._init_head_modules()
@@ -303,10 +304,61 @@ class BertAdapterModel(EmbeddingAdaptersWrapperMixin, ModelWithFlexibleHeadsAdap
         self.add_prediction_head(head, overwrite_ok=overwrite_ok)
 
 
+class AdapterBertDot_outside(BaseModelDot, BertAdapterModel):
+    def __init__(self, config, model_argobj=None):
+        BaseModelDot.__init__(self, model_argobj)
+        BertAdapterModel.__init__(self, config)
+        if int(transformers.__version__[0]) == 4:
+            config.return_dict = False
+        self.bert = BertModel(config, add_pooling_layer=False)
+        if hasattr(config, "output_embedding_size"):
+            self.output_embedding_size = config.output_embedding_size
+        else:
+            self.output_embedding_size = config.hidden_size
+        print("output_embedding_size", self.output_embedding_size)
+
+        self.task_name = 'dpr'
+
+    def first(self, emb_all):
+        return emb_all[0][:, 0]
+
+    def _text_encode(self, input_ids, attention_mask):
+        outputs1 = self.bert(input_ids=input_ids,
+                             attention_mask=attention_mask)
+        #outputs1 = self.norm(self.embeddingHead(self.first(outputs1)))
+        return self.first(outputs1)
+
+    def query_emb(self, input_ids, attention_mask):
+        outputs1 = self._text_encode(input_ids=input_ids,
+                                     attention_mask=attention_mask)
+        query1 = outputs1
+        return query1
+
+    def body_emb(self, input_ids, attention_mask):
+        return self.query_emb(input_ids, attention_mask)
+
+    def forward(self, input_ids, attention_mask, is_query, *args):
+        assert len(args) == 0
+        if is_query:
+            return self.query_emb(input_ids, attention_mask)
+        else:
+            return self.body_emb(input_ids, attention_mask)
+
+
+class AdapterBertDot_outside_InBatch(AdapterBertDot_outside):
+    def forward(self, input_query_ids, query_attention_mask,
+                input_doc_ids, doc_attention_mask,
+                other_doc_ids=None, other_doc_attention_mask=None,
+                rel_pair_mask=None, hard_pair_mask=None):
+        return inbatch_train(self.query_emb, self.body_emb,
+                             input_query_ids, query_attention_mask,
+                             input_doc_ids, doc_attention_mask,
+                             other_doc_ids, other_doc_attention_mask,
+                             rel_pair_mask, hard_pair_mask)
+
 class AdapterBertDot(BaseModelDot, BertAdapterModel):
     def __init__(self, config, model_argobj=None, adapter_path=None):
         BaseModelDot.__init__(self, model_argobj)
-        #BertPreTrainedModel.__init__(self, config)
         BertAdapterModel.__init__(self, config)
         if int(transformers.__version__[0]) == 4:
             config.return_dict = False
@@ -319,6 +371,7 @@ class AdapterBertDot(BaseModelDot, BertAdapterModel):
         print("output_embedding_size", self.output_embedding_size)
 
         self.task_name = 'dpr'
+        # --adapter_path ./data/1000/dpr\
 
         if adapter_path == None:
             print('using training mode')
@@ -336,6 +389,15 @@ class AdapterBertDot(BaseModelDot, BertAdapterModel):
             self.init_weights()
 
         else:
+            print("loading adapter from: ", adapter_path)
+
+            adapter_weights = torch.load(adapter_path + "/pytorch_adapter.bin")
+
+            for n in adapter_weights:
+                print(n, 'after loading before training')
+                print(adapter_weights[n].mean().item())
+
+
             print('using inference mode')
             name = self.bert.load_adapter(adapter_path)
             print(name)
@@ -344,8 +406,10 @@ class AdapterBertDot(BaseModelDot, BertAdapterModel):
 
             self.bert.train_adapter([name])
 
-            for (n,p) in self.bert.named_parameters():
-                print(n, p.requires_grad)
+            for (n, p) in self.bert.named_parameters():
+                if 'adapter' in n and p.requires_grad == True:
+                    print(n)
+                    print(p.mean().item())
 
     def first(self, emb_all):
         return emb_all[0][:, 0]

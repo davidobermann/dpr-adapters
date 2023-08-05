@@ -13,7 +13,7 @@ from tqdm import tqdm
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.sampler import SequentialSampler
 
-from adapter_model import AdapterBertDot
+from adapter_model import AdapterBertDot, AdapterBertDot_outside
 from dataset import (
     TextTokenIdsCache, load_rel, SubsetSeqDataset, SequenceDataset,
     single_get_collate_function
@@ -142,7 +142,13 @@ def main():
 
     config = BertConfig.from_pretrained(args.model_path, gradient_checkpointing=False)
     print('loading adapter: ' + args.adapter_path)
-    model = AdapterBertDot.from_pretrained(args.model_path, config=config, adapter_path=args.adapter_path)
+    model = AdapterBertDot_outside.from_pretrained(args.model_path, config=config)
+
+    name = model.load_adapter(args.adapter_path)
+    print(name)
+    model.set_active_adapters([name])
+    print(model.bert.adapter_summary())
+
     output_embedding_size = model.output_embedding_size
     model = model.to(args.device)
     query_inference(model, args, output_embedding_size)

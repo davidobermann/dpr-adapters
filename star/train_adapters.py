@@ -1,7 +1,8 @@
 # coding=utf-8
 import imp
 import sys
-from typing import Optional
+import warnings
+from typing import Optional, Union, Dict, Any, List
 
 from transformers.adapters.utils import WEIGHTS_NAME
 from transformers.modeling_utils import unwrap_model
@@ -11,7 +12,7 @@ sys.path.append("./")
 from model import BertDot_InBatch
 from transformers.adapters import AdapterTrainer
 
-from adapter_model import AdapterBertDot_InBatch
+from adapter_model import AdapterBertDot_InBatch, AdapterBertDot_outside_InBatch
 
 import logging
 import os
@@ -20,7 +21,7 @@ import transformers
 from transformers import (
     HfArgumentParser,
     TrainingArguments,
-    set_seed, BertTokenizer, BertConfig, AdapterArguments, PreTrainedModel,
+    set_seed, BertTokenizer, BertConfig, AdapterArguments, PreTrainedModel, PfeifferConfig,
 )
 from transformers.integrations import TensorBoardCallback
 from dataset import TextTokenIdsCache, load_rel
@@ -56,7 +57,7 @@ class MyTrainerCallback(TrainerCallback):
 
 class AdapterDRTrainer(AdapterTrainer):
 
-    # ovveride the save to ensure saving the head as well
+    # overide the save to ensure saving the head as well
     def _save(self, output_dir: Optional[str] = None, state_dict=None):
         # If we are executing this function, we are the process zero, so we don't check for that.
         output_dir = output_dir if output_dir is not None else self.args.output_dir
@@ -83,7 +84,8 @@ class AdapterDRTrainer(AdapterTrainer):
                 print(f"Head is beeing saved as checkpoint to {output_dir}")
                 #self.model.bert.save_head(os.path.join(output_dir, 'head'), 'dpr')
                 print('adapter_weights:')
-                for (n, p) in self.model.bert.named_parameters():
+                #for (n, p) in self.model.bert.named_parameters():
+                for (n, p) in self.model.named_parameters():
                     if 'adapter' in n and p.requires_grad == True:
                         print(n)
                         print(p.mean().item())
@@ -178,7 +180,13 @@ class DRTrainer(Trainer):
 class MyTensorBoardCallback(TensorBoardCallback):
 
     def on_train_begin(self, args, state, control, **kwargs):
-        pass
+        if self.tb_writer is not None:
+            if "model" in kwargs:
+                model = kwargs["model"]
+                for (n, p) in model.bert.named_parameters():
+                    if 'adapter' in n or 'dpr' in n:
+                        print(n, 'after loading on train start')
+                        print(p.mean().item())
 
     def on_log(self, args, state, control, logs=None, **kwargs):
         super().on_log(args, state, control, logs, **kwargs)
@@ -324,14 +332,35 @@ def main():
         data_args.max_query_length, data_args.max_doc_length,
         rel_dict=rel_dict, padding=training_args.padding)
 
-    model_class = AdapterBertDot_InBatch
+    #model_class = AdapterBertDot_InBatch
+    model_class = AdapterBertDot_outside_InBatch
 
+    # TODO: Error occurs here, to fix the loading change adapter insertion to antoher ways
     model = model_class.from_pretrained(
         model_args.init_path,
-        config=config,
+        config=config
         #adapter_path=None
-        adapter_path=model_args.adapter_path
+        #adapter_path=model_args.adapter_path
     )
+
+    if model_args.adapter_path != None:
+        adapter_weights = torch.load(model_args.adapter_path + "/pytorch_adapter.bin")
+
+        for n in adapter_weights:
+            print(n, 'after loading before training')
+            print(adapter_weights[n].mean().item())
+
+    model.freeze_model(freeze=True)
+    adapter_config = PfeifferConfig(reduction_factor=1)
+    model.add_adapter(model.task_name, config=adapter_config)
+    model.train_adapter([model.task_name])
+    print(model.adapter_summary())
+
+    # check if all the right things a frozen or unfrozen:
+    for (n, p) in model.named_parameters():
+        if 'adapter' in n and p.requires_grad == True:
+            print(n, 'before training after adding to model')
+            print(p.mean().item())
 
     # training_args.set_dataloader(num_workers=8)
     # training_args.set_dataloader(train_batch_size=training_args.batch_size, num_workers=training_args.workers)
