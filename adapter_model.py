@@ -1,13 +1,17 @@
 import enum
 import os
 import sys
+from abc import ABC
+from typing import Union, Tuple
+
 from torch._C import dtype
 from transformers import BertPreTrainedModel, PfeifferConfig, DistilBertAdapterModel, ParallelConfig, AdapterSetup, \
-    ModelWithFlexibleHeadsAdaptersMixin, BertModel, AutoAdapterModel
+    ModelWithFlexibleHeadsAdaptersMixin, BertModel, AutoAdapterModel, PreTrainedModel, BertConfig
 from transformers.adapters import PredictionHead, AdapterConfig, MultiLabelClassificationHead, \
     ClassificationHead, MultipleChoiceHead, TaggingHead, QuestionAnsweringHead, BiaffineParsingHead, \
     BertStyleMaskedLMHead, CausalLMHead
 from transformers.adapters.model_mixin import EmbeddingAdaptersWrapperMixin
+import transformers.adapters.composition as ac
 
 sys.path += ['./']
 import torch
@@ -186,125 +190,8 @@ class BertAdapterModel(EmbeddingAdaptersWrapperMixin, ModelWithFlexibleHeadsAdap
         "causal_lm": CausalLMHead,
     }
 
-    def add_classification_head(
-        self,
-        head_name,
-        num_labels=2,
-        layers=2,
-        activation_function="tanh",
-        overwrite_ok=False,
-        multilabel=False,
-        id2label=None,
-        use_pooler=False,
-    ):
-        """
-        Adds a sequence classification head on top of the model.
 
-        Args:
-            head_name (str): The name of the head.
-            num_labels (int, optional): Number of classification labels. Defaults to 2.
-            layers (int, optional): Number of layers. Defaults to 2.
-            activation_function (str, optional): Activation function. Defaults to 'tanh'.
-            overwrite_ok (bool, optional): Force overwrite if a head with the same name exists. Defaults to False.
-            multilabel (bool, optional): Enable multilabel classification setup. Defaults to False.
-        """
-
-        if multilabel:
-            head = MultiLabelClassificationHead(
-                self, head_name, num_labels, layers, activation_function, id2label, use_pooler
-            )
-        else:
-            head = ClassificationHead(self, head_name, num_labels, layers, activation_function, id2label, use_pooler)
-        self.add_prediction_head(head, overwrite_ok)
-
-    def add_multiple_choice_head(
-        self,
-        head_name,
-        num_choices=2,
-        layers=2,
-        activation_function="tanh",
-        overwrite_ok=False,
-        id2label=None,
-        use_pooler=False,
-    ):
-        """
-        Adds a multiple choice head on top of the model.
-
-        Args:
-            head_name (str): The name of the head.
-            num_choices (int, optional): Number of choices. Defaults to 2.
-            layers (int, optional): Number of layers. Defaults to 2.
-            activation_function (str, optional): Activation function. Defaults to 'tanh'.
-            overwrite_ok (bool, optional): Force overwrite if a head with the same name exists. Defaults to False.
-        """
-        head = MultipleChoiceHead(self, head_name, num_choices, layers, activation_function, id2label, use_pooler)
-        self.add_prediction_head(head, overwrite_ok)
-
-    def add_tagging_head(
-        self, head_name, num_labels=2, layers=1, activation_function="tanh", overwrite_ok=False, id2label=None
-    ):
-        """
-        Adds a token classification head on top of the model.
-
-        Args:
-            head_name (str): The name of the head.
-            num_labels (int, optional): Number of classification labels. Defaults to 2.
-            layers (int, optional): Number of layers. Defaults to 1.
-            activation_function (str, optional): Activation function. Defaults to 'tanh'.
-            overwrite_ok (bool, optional): Force overwrite if a head with the same name exists. Defaults to False.
-        """
-        head = TaggingHead(self, head_name, num_labels, layers, activation_function, id2label)
-        self.add_prediction_head(head, overwrite_ok)
-
-    def add_qa_head(
-        self, head_name, num_labels=2, layers=1, activation_function="tanh", overwrite_ok=False, id2label=None
-    ):
-        head = QuestionAnsweringHead(self, head_name, num_labels, layers, activation_function, id2label)
-        self.add_prediction_head(head, overwrite_ok)
-
-    def add_dependency_parsing_head(self, head_name, num_labels=2, overwrite_ok=False, id2label=None):
-        """
-        Adds a biaffine dependency parsing head on top of the model. The parsing head uses the architecture described
-        in "Is Supervised Syntactic Parsing Beneficial for Language Understanding? An Empirical Investigation" (Glavaš
-        & Vulić, 2021) (https://arxiv.org/pdf/2008.06788.pdf).
-
-        Args:
-            head_name (str): The name of the head.
-            num_labels (int, optional): Number of labels. Defaults to 2.
-            overwrite_ok (bool, optional): Force overwrite if a head with the same name exists. Defaults to False.
-            id2label (dict, optional): Mapping from label ids to labels. Defaults to None.
-        """
-        head = BiaffineParsingHead(self, head_name, num_labels, id2label)
-        self.add_prediction_head(head, overwrite_ok)
-
-    def add_masked_lm_head(self, head_name, activation_function="gelu", overwrite_ok=False):
-        """
-        Adds a masked language modeling head on top of the model.
-
-        Args:
-            head_name (str): The name of the head.
-            activation_function (str, optional): Activation function. Defaults to 'gelu'.
-            overwrite_ok (bool, optional): Force overwrite if a head with the same name exists. Defaults to False.
-        """
-        head = BertStyleMaskedLMHead(self, head_name, activation_function=activation_function)
-        self.add_prediction_head(head, overwrite_ok=overwrite_ok)
-
-    def add_causal_lm_head(self, head_name, activation_function="gelu", overwrite_ok=False):
-        """
-        Adds a causal language modeling head on top of the model.
-
-        Args:
-            head_name (str): The name of the head.
-            activation_function (str, optional): Activation function. Defaults to 'gelu'.
-            overwrite_ok (bool, optional): Force overwrite if a head with the same name exists. Defaults to False.
-        """
-        head = CausalLMHead(
-            self, head_name, layers=2, activation_function=activation_function, layer_norm=True, bias=True
-        )
-        self.add_prediction_head(head, overwrite_ok=overwrite_ok)
-
-
-class AdapterBertDot_outside(BaseModelDot, BertAdapterModel):
+class AdapterBertDot(BaseModelDot, BertAdapterModel):
     def __init__(self, config, model_argobj=None):
         BaseModelDot.__init__(self, model_argobj)
         BertAdapterModel.__init__(self, config)
@@ -319,18 +206,21 @@ class AdapterBertDot_outside(BaseModelDot, BertAdapterModel):
 
         self.task_name = 'dpr'
 
+    def load_my_adapter(self, adapter_path):
+        return self.load_adapter(adapter_path)
+
+    def init_adapter_setup(self, config):
+        self.add_adapter(self.task_name, config=config)
+
     def first(self, emb_all):
         return emb_all[0][:, 0]
 
     def _text_encode(self, input_ids, attention_mask):
-        outputs1 = self.bert(input_ids=input_ids,
-                             attention_mask=attention_mask)
-        #outputs1 = self.norm(self.embeddingHead(self.first(outputs1)))
+        outputs1 = self.bert(input_ids=input_ids, attention_mask=attention_mask)
         return self.first(outputs1)
 
     def query_emb(self, input_ids, attention_mask):
-        outputs1 = self._text_encode(input_ids=input_ids,
-                                     attention_mask=attention_mask)
+        outputs1 = self._text_encode(input_ids=input_ids, attention_mask=attention_mask)
         query1 = outputs1
         return query1
 
@@ -345,7 +235,152 @@ class AdapterBertDot_outside(BaseModelDot, BertAdapterModel):
             return self.body_emb(input_ids, attention_mask)
 
 
-class AdapterBertDot_outside_InBatch(AdapterBertDot_outside):
+class CompoundModel(nn.Module):
+    def __init__(self, config, init_path):
+        super().__init__()
+
+        self.bertQ = BertModel.from_pretrained(init_path, config=config)
+        self.bertD = BertModel.from_pretrained(init_path, config=config)
+
+        if hasattr(config, "output_embedding_size"):
+            self.output_embedding_size = config.output_embedding_size
+        else:
+            self.output_embedding_size = config.hidden_size
+
+    def _init_weights(self, module):
+        self.bertQ.init_weights()
+        self.bertD.init_weights()
+
+    def resize_position_embeddings(self, new_num_position_embeddings: int):
+        self.bertQ.resize_position_embeddings(new_num_position_embeddings)
+        self.bertD.resize_position_embeddings(new_num_position_embeddings)
+
+    def get_position_embeddings(self) -> Union[nn.Embedding, Tuple[nn.Embedding]]:
+        return self.bertQ.get_position_embeddings(), self.bertD.get_position_embeddings()
+
+    def _reorder_cache(self, past, beam_idx):
+        pass
+
+    def init_adapter_setup(self, config):
+        self.bertQ.add_adapter(self.task_name + 'Q', config)
+        self.bertD.add_adapter(self.task_name + 'D', config)
+
+        self.bertQ.freeze_model(freeze=True)
+        self.bertD.freeze_model(freeze=True)
+
+        self.bertQ.train_adapter([self.task_name + 'Q'])
+        self.bertD.train_adapter([self.task_name + 'D'])
+
+        print(self.bertQ.adapter_summary())
+        print(self.bertD.adapter_summary())
+
+    def save_all_adapters(self, output_dir):
+        self.bertQ.save_all_adapters(output_dir)
+        self.bertD.save_all_adapters(output_dir)
+
+    def load_adapters(self, adapter_path):
+        self.bertQ.freeze_model(freeze=True)
+        self.bertD.freeze_model(freeze=True)
+
+        print('loading: ' + adapter_path + '/dprQ')
+        print('loading: ' + adapter_path + '/dprD')
+
+        nameQ = self.bertQ.load_adapter(adapter_path + '/dprQ')
+        nameD = self.bertD.load_adapter(adapter_path + '/dprD')
+
+        self.bertQ.set_active_adapters([nameQ])
+        self.bertD.set_active_adapters([nameD])
+
+        self.bertQ.train_adapter([self.task_name + 'Q'])
+        self.bertD.train_adapter([self.task_name + 'D'])
+
+        print(self.bertD.adapter_summary())
+        print(self.bertQ.adapter_summary())
+        return nameQ, nameD
+
+    def first(self, emb_all):
+        return emb_all[0][:, 0]
+
+    def query_emb(self, input_ids, attention_mask):
+        outputs1 = self.bertQ(input_ids=input_ids, attention_mask=attention_mask)
+        query1 = self.first(outputs1)
+        return query1
+
+    def body_emb(self, input_ids, attention_mask):
+        outputs1 = self.bertD(input_ids=input_ids, attention_mask=attention_mask)
+        body = self.first(outputs1)
+        return body
+
+    def forward(self, input_ids, attention_mask, is_query, *args):
+        assert len(args) == 0
+        if is_query:
+            return self.query_emb(input_ids, attention_mask)
+        else:
+            return self.body_emb(input_ids, attention_mask)
+
+
+
+class AdapterBertDot_dual(BaseModelDot, BertAdapterModel):
+    def __init__(self, config, model_argobj=None, adapter_path=None):
+        BaseModelDot.__init__(self, model_argobj)
+        BertAdapterModel.__init__(self, config)
+        if int(transformers.__version__[0]) == 4:
+            config.return_dict = False
+        if hasattr(config, "output_embedding_size"):
+            self.output_embedding_size = config.output_embedding_size
+        else:
+            self.output_embedding_size = config.hidden_size
+        print("output_embedding_size", self.output_embedding_size)
+
+        self.task_name = 'dpr'
+        # --adapter_path ./data/1000/dpr\
+
+    def load_my_adapters(self, adapter_pathQ, adapter_pathD):
+        name1 = self.load_adapter(adapter_pathQ)
+        name2 = self.load_adapter(adapter_pathD)
+        return name1, name2
+
+    def enable_training(self):
+        self.freeze_model(freeze=True)
+        self.train_adapter([self.task_name + 'D'])
+        self.train_adapter([self.task_name + 'Q'])
+
+        for (n, p) in self.named_parameters():
+            #if 'adapter' in n and p.requires_grad == True:
+            #    print(n, 'before training after loading in model function')
+            #    print(p.mean().item())
+            print(n, p.requires_grad)
+
+    def init_adapter_setup(self, config):
+        self.add_adapter(self.task_name + 'Q', config)
+        self.add_adapter(self.task_name + 'D', config)
+
+        self.freeze_model(freeze=True)
+
+        self.train_adapter([self.task_name + 'Q'])
+        self.train_adapter([self.task_name + 'D'])
+
+        self.active_adapters = ac.Split(self.task_name + 'Q', self.task_name + 'D', split_index=24)
+
+        print(self.adapter_summary())
+
+    def first(self, emb_all):
+        return emb_all[0][:, 0]
+
+    def query_emb(self, input_ids, attention_mask):
+        return self.first(self.bertQ(input_ids=input_ids, attention_mask=attention_mask))
+
+    def body_emb(self, input_ids, attention_mask):
+        return self.first(self.bertD(input_ids=input_ids, attention_mask=attention_mask))
+
+    def forward(self, input_ids, attention_mask, is_query, *args):
+        assert len(args) == 0
+        if is_query:
+            return self.query_emb(input_ids, attention_mask)
+        else:
+            return self.body_emb(input_ids, attention_mask)
+
+class CompoundModel_InBatch(CompoundModel):
     def forward(self, input_query_ids, query_attention_mask,
                 input_doc_ids, doc_attention_mask,
                 other_doc_ids=None, other_doc_attention_mask=None,
@@ -356,86 +391,16 @@ class AdapterBertDot_outside_InBatch(AdapterBertDot_outside):
                              other_doc_ids, other_doc_attention_mask,
                              rel_pair_mask, hard_pair_mask)
 
-class AdapterBertDot(BaseModelDot, BertAdapterModel):
-    def __init__(self, config, model_argobj=None, adapter_path=None):
-        BaseModelDot.__init__(self, model_argobj)
-        BertAdapterModel.__init__(self, config)
-        if int(transformers.__version__[0]) == 4:
-            config.return_dict = False
-        #self.bert = BertAdapterModel(config)
-        self.bert = BertModel(config, add_pooling_layer=False)
-        if hasattr(config, "output_embedding_size"):
-            self.output_embedding_size = config.output_embedding_size
-        else:
-            self.output_embedding_size = config.hidden_size
-        print("output_embedding_size", self.output_embedding_size)
-
-        self.task_name = 'dpr'
-        # --adapter_path ./data/1000/dpr\
-
-        if adapter_path == None:
-            print('using training mode')
-            self.bert.freeze_model(freeze=True)
-
-            adapter_config = PfeifferConfig(reduction_factor=1)
-            self.bert.add_adapter(self.task_name, config=adapter_config)
-            self.bert.train_adapter([self.task_name])
-            print(self.bert.adapter_summary())
-
-            #check if all the right things a frozen or unfrozen:
-            for (n,p) in self.named_parameters():
-                print(n, p.requires_grad)
-
-            self.init_weights()
-
-        else:
-            print("loading adapter from: ", adapter_path)
-
-            adapter_weights = torch.load(adapter_path + "/pytorch_adapter.bin")
-
-            for n in adapter_weights:
-                print(n, 'after loading before training')
-                print(adapter_weights[n].mean().item())
-
-
-            print('using inference mode')
-            name = self.bert.load_adapter(adapter_path)
-            print(name)
-            self.bert.set_active_adapters([name])
-            print(self.bert.adapter_summary())
-
-            self.bert.train_adapter([name])
-
-            for (n, p) in self.bert.named_parameters():
-                if 'adapter' in n and p.requires_grad == True:
-                    print(n)
-                    print(p.mean().item())
-
-    def first(self, emb_all):
-        return emb_all[0][:, 0]
-
-    def _text_encode(self, input_ids, attention_mask):
-        outputs1 = self.bert(input_ids=input_ids,
-                             attention_mask=attention_mask)
-        #outputs1 = self.norm(self.embeddingHead(self.first(outputs1)))
-        return self.first(outputs1)
-
-    def query_emb(self, input_ids, attention_mask):
-        outputs1 = self._text_encode(input_ids=input_ids,
-                                     attention_mask=attention_mask)
-        query1 = outputs1
-        return query1
-
-    def body_emb(self, input_ids, attention_mask):
-        return self.query_emb(input_ids, attention_mask)
-
-    def forward(self, input_ids, attention_mask, is_query, *args):
-        assert len(args) == 0
-        if is_query:
-            return self.query_emb(input_ids, attention_mask)
-        else:
-            return self.body_emb(input_ids, attention_mask)
-
+class AdapterBertDot_dual_InBatch(AdapterBertDot_dual):
+    def forward(self, input_query_ids, query_attention_mask,
+                input_doc_ids, doc_attention_mask,
+                other_doc_ids=None, other_doc_attention_mask=None,
+                rel_pair_mask=None, hard_pair_mask=None):
+        return inbatch_train(self.query_emb, self.body_emb,
+                             input_query_ids, query_attention_mask,
+                             input_doc_ids, doc_attention_mask,
+                             other_doc_ids, other_doc_attention_mask,
+                             rel_pair_mask, hard_pair_mask)
 
 class AdapterBertDot_InBatch(AdapterBertDot):
     def forward(self, input_query_ids, query_attention_mask,

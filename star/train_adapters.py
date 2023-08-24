@@ -12,7 +12,7 @@ sys.path.append("./")
 from model import BertDot_InBatch
 from transformers.adapters import AdapterTrainer
 
-from adapter_model import AdapterBertDot_InBatch, AdapterBertDot_outside_InBatch
+from adapter_model import AdapterBertDot_InBatch, AdapterBertDot_dual_InBatch, CompoundModel, CompoundModel_InBatch
 
 import logging
 import os
@@ -137,6 +137,34 @@ class AdapterDRTrainer(AdapterTrainer):
 
 class DRTrainer(Trainer):
 
+    def _save(self, output_dir: Optional[str] = None, state_dict=None):
+        # If we are executing this function, we are the process zero, so we don't check for that.
+        output_dir = output_dir if output_dir is not None else self.args.output_dir
+        os.makedirs(output_dir, exist_ok=True)
+        logger.info(f"Saving model checkpoint to {output_dir}")
+        # Save a trained model and configuration using `save_pretrained()`.
+        # They can then be reloaded using `from_pretrained()`
+
+        if isinstance(self.model, CompoundModel):
+            self.model.save_all_adapters(output_dir)
+        elif not isinstance(self.model, PreTrainedModel) and not isinstance(self.model, CompoundModel):
+            if isinstance(unwrap_model(self.model), PreTrainedModel):
+                if state_dict is None:
+                    state_dict = self.model.state_dict()
+                unwrap_model(self.model).save_pretrained(output_dir, state_dict=state_dict)
+            else:
+                logger.info("Trainer.model is not a `PreTrainedModel`, only saving its state dict.")
+                if state_dict is None:
+                    state_dict = self.model.state_dict()
+                torch.save(state_dict, os.path.join(output_dir, WEIGHTS_NAME))
+        else:
+            self.model.save_pretrained(output_dir, state_dict=state_dict)
+        if self.tokenizer is not None:
+            self.tokenizer.save_pretrained(output_dir)
+
+        # Good practice: save your training arguments together with the trained model
+        torch.save(self.args, os.path.join(output_dir, "training_args.bin"))
+
     def create_optimizer_and_scheduler(self, num_training_steps: int):
         """
         Setup the optimizer and the learning rate scheduler.
@@ -183,7 +211,7 @@ class MyTensorBoardCallback(TensorBoardCallback):
         if self.tb_writer is not None:
             if "model" in kwargs:
                 model = kwargs["model"]
-                for (n, p) in model.bert.named_parameters():
+                for (n, p) in model.named_parameters():
                     if 'adapter' in n or 'dpr' in n:
                         print(n, 'after loading on train start')
                         print(p.mean().item())
@@ -197,10 +225,11 @@ class MyTensorBoardCallback(TensorBoardCallback):
         if self.tb_writer is not None:
             if "model" in kwargs:
                 model = kwargs["model"]
-                for (n, p) in model.bert.named_parameters():
+                for (n, p) in model.named_parameters():
                     if 'adapter' in n or 'dpr' in n:
                         #self.tb_writer.add_scalar(n + '_mean', p.mean().item(), state.global_step)
-                        self.tb_writer.add_histogram(n, p, state.global_step)
+                        #self.tb_writer.add_histogram(n, p, state.global_step)
+                        pass
 
             self.tb_writer.flush()
 
@@ -309,6 +338,7 @@ def main():
         finetuning_task="msmarco",
         gradient_checkpointing=model_args.gradient_checkpointing
     )
+
     tokenizer = BertTokenizer.from_pretrained(
         model_args.init_path,
         use_fast=False,
@@ -333,28 +363,35 @@ def main():
         rel_dict=rel_dict, padding=training_args.padding)
 
     #model_class = AdapterBertDot_InBatch
-    model_class = AdapterBertDot_outside_InBatch
+    #model_class = AdapterBertDot_dual_InBatch
 
-    # TODO: Error occurs here, to fix the loading change adapter insertion to antoher ways
-    model = model_class.from_pretrained(
-        model_args.init_path,
-        config=config
+
+    #model = model_class.from_pretrained(
+    #    model_args.init_path,
+    #    config=config,
         #adapter_path=None
         #adapter_path=model_args.adapter_path
-    )
+    #)
+
+    model = CompoundModel_InBatch(config, model_args.init_path)
 
     if model_args.adapter_path != None:
-        adapter_weights = torch.load(model_args.adapter_path + "/pytorch_adapter.bin")
+        adapter_weights = torch.load(model_args.adapter_path + "/dprQ/pytorch_adapter.bin")
 
         for n in adapter_weights:
             print(n, 'after loading before training')
             print(adapter_weights[n].mean().item())
 
-    model.freeze_model(freeze=True)
+    #model.freeze_model(freeze=True)
     adapter_config = PfeifferConfig(reduction_factor=1)
-    model.add_adapter(model.task_name, config=adapter_config)
-    model.train_adapter([model.task_name])
-    print(model.adapter_summary())
+    #model.add_adapter(model.task_name, config=adapter_config)
+    #model.load_adapter(model_args.adapter_path)
+
+    #model.load_my_adapters(model_args.adapter_path, model_args.adapter_path)
+    #model.enable_training()
+    #model.train_adapter([model.task_name])
+    #model.init_adapter_setup(adapter_config)
+    model.load_adapters(model_args.adapter_path)
 
     # check if all the right things a frozen or unfrozen:
     for (n, p) in model.named_parameters():
@@ -366,7 +403,7 @@ def main():
     # training_args.set_dataloader(train_batch_size=training_args.batch_size, num_workers=training_args.workers)
 
     # Initialize our Trainer
-    trainer = AdapterDRTrainer(
+    trainer = DRTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
