@@ -1,3 +1,9 @@
+DualAdapter-tiny fused 4k steps:
+#####################
+MRR @10: 0.11113618274434917
+QueriesRanked: 6980
+#####################
+
 DualAdapterbert-Small 4k steps
 #####################
 MRR @10: 0.11847779369627545

@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 
 from transformers import BertModel
 from transformers.adapters import PredictionHead
+from transformers.adapters.composition import Fuse
 
 sys.path += ['./']
 import torch
@@ -125,7 +126,7 @@ class BertDot_SingleAdapter(nn.Module, Saveable, BaseModelDot):
 
         self.task_name = 'dpr'
 
-    def load_adapter(self, adapter_path):
+    def load_adapters(self, adapter_path):
         name = self.bert.load_adapter(adapter_path)
         self.bert.set_active_adapters([name])
         print(self.bert.adapter_summary())
@@ -244,7 +245,76 @@ class BertDot_DualAdapter(nn.Module, BaseModelDot, Saveable):
         else:
             return self.body_emb(input_ids, attention_mask)
 
+class BertDot_DualFusion(nn.Module, Saveable, BaseModelDot):
+    def __init__(self, config, init_path):
+        super().__init__()
 
+        self.bert = BertModel.from_pretrained(init_path, config=config)
+
+        if hasattr(config, "output_embedding_size"):
+            self.output_embedding_size = config.output_embedding_size
+        else:
+            self.output_embedding_size = config.hidden_size
+
+        self.task_name = 'dpr'
+
+    def load_adapters(self, adapter_path):
+        nameQ = self.bert.load_adapter(adapter_path + '/dprQ', with_head=False)
+        nameD = self.bert.load_adapter(adapter_path + '/dprD', with_head=False)
+        self.bert.load_adapter_fusion(adapter_path)
+        self.bert.set_active_adapters(Fuse(nameQ, nameD))
+        print(self.bert.adapter_summary())
+
+    def init_adapter_setup(self, adapter_path):
+        nameQ = self.bert.load_adapter(adapter_path + '/dprQ', with_head=False)
+        nameD = self.bert.load_adapter(adapter_path + '/dprD', with_head=False)
+        self.bert.add_adapter_fusion(Fuse(nameQ, nameD))
+        self.bert.set_active_adapters(Fuse(nameQ, nameD))
+        self.bert.train_adapter(Fuse(nameQ, nameD))
+        print(self.bert.adapter_summary())
+
+    def save_all_adapters(self, output_dir):
+        self.bert.save_all_adapters(output_dir)
+
+    def save_all_adapter_fusions(self, output_dir):
+        self.bert.save_adapter_fusion(save_directory=output_dir, adapter_names='dprQ,dprD')
+
+    def save_all_heads(self, output_dir):
+        pass
+
+    def first(self, emb_all):
+        return emb_all[0][:, 0]
+
+    def _text_encode(self, input_ids, attention_mask):
+        outputs1 = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+        return self.first(outputs1)
+
+    def query_emb(self, input_ids, attention_mask):
+        outputs1 = self._text_encode(input_ids=input_ids, attention_mask=attention_mask)
+        query1 = outputs1
+        return query1
+
+    def body_emb(self, input_ids, attention_mask):
+        return self.query_emb(input_ids, attention_mask)
+
+    def forward(self, input_ids, attention_mask, is_query, *args):
+        assert len(args) == 0
+        if is_query:
+            return self.query_emb(input_ids, attention_mask)
+        else:
+            return self.body_emb(input_ids, attention_mask)
+
+
+class BertDot_DualFusion_InBatch(BertDot_DualFusion):
+    def forward(self, input_query_ids, query_attention_mask,
+                input_doc_ids, doc_attention_mask,
+                other_doc_ids=None, other_doc_attention_mask=None,
+                rel_pair_mask=None, hard_pair_mask=None):
+        return inbatch_train(self.query_emb, self.body_emb,
+                             input_query_ids, query_attention_mask,
+                             input_doc_ids, doc_attention_mask,
+                             other_doc_ids, other_doc_attention_mask,
+                             rel_pair_mask, hard_pair_mask)
 
 class BertDot_DualAdapter_InBatch(BertDot_DualAdapter):
     def forward(self, input_query_ids, query_attention_mask,
@@ -256,7 +326,6 @@ class BertDot_DualAdapter_InBatch(BertDot_DualAdapter):
                              input_doc_ids, doc_attention_mask,
                              other_doc_ids, other_doc_attention_mask,
                              rel_pair_mask, hard_pair_mask)
-
 
 class BertDot_SingleAdapter_InBatch(BertDot_SingleAdapter):
     def forward(self, input_query_ids, query_attention_mask,

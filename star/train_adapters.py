@@ -6,10 +6,7 @@ import torch
 from transformers.adapters.utils import WEIGHTS_NAME
 from transformers.modeling_utils import unwrap_model
 
-from adapter_model import Saveable
-
 sys.path.append("./")
-from transformers.adapters import AdapterTrainer
 
 import logging
 import os
@@ -36,6 +33,8 @@ from transformers import (
 )
 from transformers import AdamW, get_linear_schedule_with_warmup
 from lamb import Lamb
+
+from adapter_model import Saveable, BertDot_DualFusion_InBatch
 
 logger = logging.Logger(__name__)
 
@@ -278,18 +277,10 @@ def main():
         data_args.max_query_length, data_args.max_doc_length,
         rel_dict=rel_dict, padding=training_args.padding)
 
-    model = (config, model_args.init_path)
-
-    if model_args.adapter_path != None:
-        adapter_weights = torch.load(model_args.adapter_path + "/dprQ/pytorch_adapter.bin")
-
-        for n in adapter_weights:
-            print(n, 'after loading before training')
-            print(adapter_weights[n].mean().item())
-
+    model = BertDot_DualFusion_InBatch(config, model_args.init_path)
 
     adapter_config = PfeifferConfig(reduction_factor=model_args.reduction_factor)
-    model.init_adapter_setup(adapter_config)
+    model.init_adapter_setup(model_args.adapter_path)
 
     # check if all the right things a frozen or unfrozen:
     for (n, p) in model.named_parameters():

@@ -1,11 +1,9 @@
 # coding=utf-8
+import sys
+sys.path.append("./")
 import argparse
 import subprocess
-import sys
-
-from adapter_model import BertDot_DualAdapter
-
-sys.path.append("./")
+from adapter_model import BertDot_DualAdapter, BertDot_DualFusion
 import faiss
 import logging
 import os
@@ -144,8 +142,8 @@ def main():
 
     config = BertConfig.from_pretrained(args.model_path, gradient_checkpointing=False)
     print('loading adapter: ' + args.adapter_path)
-    model = BertDot_DualAdapter(init_path=args.model_path, config=config)
 
+    model = BertDot_DualFusion(init_path=args.model_path, config=config)
     model.load_adapters(args.adapter_path)
 
     output_embedding_size = model.output_embedding_size
