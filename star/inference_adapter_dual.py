@@ -2,20 +2,22 @@
 import argparse
 import subprocess
 import sys
+
+from adapter_model import BertDot_DualAdapter
+
 sys.path.append("./")
 import faiss
 import logging
 import os
 import numpy as np
 import torch
-from transformers import RobertaConfig, BertConfig
+from transformers import BertConfig
 from tqdm import tqdm
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.sampler import SequentialSampler
 
-from adapter_model import AdapterBertDot, CompoundModel
 from dataset import (
-    TextTokenIdsCache, load_rel, SubsetSeqDataset, SequenceDataset,
+    TextTokenIdsCache, SubsetSeqDataset, SequenceDataset,
     single_get_collate_function
 )
 from retrieve_utils import (
@@ -142,7 +144,7 @@ def main():
 
     config = BertConfig.from_pretrained(args.model_path, gradient_checkpointing=False)
     print('loading adapter: ' + args.adapter_path)
-    model = CompoundModel(init_path=args.model_path, config=config)
+    model = BertDot_DualAdapter(init_path=args.model_path, config=config)
 
     model.load_adapters(args.adapter_path)
 

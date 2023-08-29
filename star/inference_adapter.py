@@ -8,14 +8,14 @@ import logging
 import os
 import numpy as np
 import torch
-from transformers import RobertaConfig, BertConfig
+from transformers import BertConfig
 from tqdm import tqdm
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.sampler import SequentialSampler
 
-from adapter_model import AdapterBertDot, Compound_single
+from adapter_model import BertDot_SingleAdapter
 from dataset import (
-    TextTokenIdsCache, load_rel, SubsetSeqDataset, SequenceDataset,
+    TextTokenIdsCache, SubsetSeqDataset, SequenceDataset,
     single_get_collate_function
 )
 from retrieve_utils import (
@@ -142,14 +142,8 @@ def main():
 
     config = BertConfig.from_pretrained(args.model_path, gradient_checkpointing=False)
     print('loading adapter: ' + args.adapter_path)
-    #model = AdapterBertDot_outside.from_pretrained(args.model_path, config=config)
 
-    #name = model.load_adapter(args.adapter_path)
-    #print(name)
-    #model.set_active_adapters([name])
-    #print(model.bert.adapter_summary())
-
-    model = Compound_single(config, args.model_path)
+    model = BertDot_SingleAdapter(config, args.model_path)
     model.load_adapter(args.adapter_path)
 
     output_embedding_size = model.output_embedding_size

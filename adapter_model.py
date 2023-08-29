@@ -1,22 +1,12 @@
-import enum
-import os
 import sys
 from abc import ABC, abstractmethod
-from typing import Union, Tuple
 
-from torch._C import dtype
-from transformers import BertPreTrainedModel, PfeifferConfig, DistilBertAdapterModel, ParallelConfig, AdapterSetup, \
-    ModelWithFlexibleHeadsAdaptersMixin, BertModel, AutoAdapterModel, PreTrainedModel, BertConfig
-from transformers.adapters import PredictionHead, AdapterConfig, MultiLabelClassificationHead, \
-    ClassificationHead, MultipleChoiceHead, TaggingHead, QuestionAnsweringHead, BiaffineParsingHead, \
-    BertStyleMaskedLMHead, CausalLMHead
-from transformers.adapters.model_mixin import EmbeddingAdaptersWrapperMixin
-import transformers.adapters.composition as ac
+from transformers import BertModel
+from transformers.adapters import PredictionHead
 
 sys.path += ['./']
 import torch
 from torch import nn
-import transformers
 import torch.nn.functional as F
 from torch.cuda.amp import autocast
 
@@ -68,8 +58,7 @@ class BaseModelDot(EmbeddingMixin):
         return None
 
     def query_emb(self, input_ids, attention_mask):
-        outputs1 = self._text_encode(input_ids=input_ids,
-                                     attention_mask=attention_mask)
+        outputs1 = self._text_encode(input_ids=input_ids, attention_mask=attention_mask)
         full_emb = self.masked_mean_or_first(outputs1, attention_mask)
         query1 = self.norm(self.embeddingHead(full_emb))
         return query1
@@ -83,6 +72,20 @@ class BaseModelDot(EmbeddingMixin):
             return self.query_emb(input_ids, attention_mask)
         else:
             return self.body_emb(input_ids, attention_mask)
+
+
+class Saveable(ABC):
+    @abstractmethod
+    def save_all_adapters(self, output_dir):
+        pass
+
+    @abstractmethod
+    def save_all_adapter_fusions(self, output_dir):
+        pass
+
+    @abstractmethod
+    def save_all_heads(self, output_dir):
+        pass
 
 
 class DPRHead(PredictionHead):
@@ -109,137 +112,7 @@ class DPRHead(PredictionHead):
         head_output = self.norm(self.embeddingHead(full_emb))
         return head_output
 
-
-class BertAdapterModel(EmbeddingAdaptersWrapperMixin, ModelWithFlexibleHeadsAdaptersMixin, BertPreTrainedModel):
-    def __init__(self, config):
-        super().__init__(config)
-
-        # rewritten class to remove pooling layer
-        self.bert = BertModel(config, add_pooling_layer=False)
-
-        self._init_head_modules()
-
-        self.init_weights()
-
-    def forward(
-        self,
-        input_ids=None,
-        attention_mask=None,
-        token_type_ids=None,
-        position_ids=None,
-        head_mask=None,
-        inputs_embeds=None,
-        output_attentions=None,
-        output_hidden_states=None,
-        return_dict=None,
-        head=None,
-        **kwargs
-    ):
-        input_ids = input_ids.view(-1, input_ids.size(-1)) if input_ids is not None else None
-        attention_mask = attention_mask.view(-1, attention_mask.size(-1)) if attention_mask is not None else None
-        token_type_ids = token_type_ids.view(-1, token_type_ids.size(-1)) if token_type_ids is not None else None
-        position_ids = position_ids.view(-1, position_ids.size(-1)) if position_ids is not None else None
-        inputs_embeds = (
-            inputs_embeds.view(-1, inputs_embeds.size(-2), inputs_embeds.size(-1))
-            if inputs_embeds is not None
-            else None
-        )
-
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        outputs = self.bert(
-            input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        )
-        # BERT & RoBERTa return the pooled output as second item, we don't need that in these heads
-        if not return_dict:
-            head_inputs = (outputs[0],) + outputs[2:]
-        else:
-            head_inputs = outputs
-        pooled_output = outputs[1]
-
-        if head or AdapterSetup.get_context_head_setup() or self.active_head:
-            head_outputs = self.forward_head(
-                head_inputs,
-                head_name=head,
-                attention_mask=attention_mask,
-                return_dict=return_dict,
-                pooled_output=pooled_output,
-                **kwargs,
-            )
-            return head_outputs
-        else:
-            # in case no head is used just return the output of the base model (including pooler output)
-            return outputs
-
-    head_types = {
-        "classification": ClassificationHead,
-        "multilabel_classification": MultiLabelClassificationHead,
-        "tagging": TaggingHead,
-        "multiple_choice": MultipleChoiceHead,
-        "question_answering": QuestionAnsweringHead,
-        "dependency_parsing": BiaffineParsingHead,
-        "masked_lm": BertStyleMaskedLMHead,
-        "causal_lm": CausalLMHead,
-    }
-
-
-class AdapterBertDot(BaseModelDot, BertAdapterModel):
-    def __init__(self, config, model_argobj=None):
-        BaseModelDot.__init__(self, model_argobj)
-        BertAdapterModel.__init__(self, config)
-        if int(transformers.__version__[0]) == 4:
-            config.return_dict = False
-        self.bert = BertModel(config, add_pooling_layer=False)
-        if hasattr(config, "output_embedding_size"):
-            self.output_embedding_size = config.output_embedding_size
-        else:
-            self.output_embedding_size = config.hidden_size
-        print("output_embedding_size", self.output_embedding_size)
-
-        self.task_name = 'dpr'
-
-    def load_my_adapter(self, adapter_path):
-        return self.load_adapter(adapter_path)
-
-    def init_adapter_setup(self, config):
-        self.add_adapter(self.task_name, config=config)
-
-    def first(self, emb_all):
-        return emb_all[0][:, 0]
-
-    def _text_encode(self, input_ids, attention_mask):
-        outputs1 = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-        return self.first(outputs1)
-
-    def query_emb(self, input_ids, attention_mask):
-        outputs1 = self._text_encode(input_ids=input_ids, attention_mask=attention_mask)
-        query1 = outputs1
-        return query1
-
-    def body_emb(self, input_ids, attention_mask):
-        return self.query_emb(input_ids, attention_mask)
-
-    def forward(self, input_ids, attention_mask, is_query, *args):
-        assert len(args) == 0
-        if is_query:
-            return self.query_emb(input_ids, attention_mask)
-        else:
-            return self.body_emb(input_ids, attention_mask)
-
-class Saveable(ABC):
-    @abstractmethod
-    def save_all_adapters(self, output_dir):
-        pass
-
-class Compound_single(nn.Module, Saveable):
+class BertDot_SingleAdapter(nn.Module, Saveable, BaseModelDot):
     def __init__(self, config, init_path):
         super().__init__()
 
@@ -251,9 +124,6 @@ class Compound_single(nn.Module, Saveable):
             self.output_embedding_size = config.hidden_size
 
         self.task_name = 'dpr'
-
-    def _init_weights(self, module):
-        self.bert.init_weights()
 
     def load_adapter(self, adapter_path):
         name = self.bert.load_adapter(adapter_path)
@@ -269,6 +139,12 @@ class Compound_single(nn.Module, Saveable):
     def save_all_adapters(self, output_dir):
         self.bert.save_all_adapters(output_dir)
 
+    def save_all_adapter_fusions(self, output_dir):
+        pass
+
+    def save_all_heads(self, output_dir):
+        pass
+
     def first(self, emb_all):
         return emb_all[0][:, 0]
 
@@ -291,7 +167,7 @@ class Compound_single(nn.Module, Saveable):
         else:
             return self.body_emb(input_ids, attention_mask)
 
-class CompoundModel(nn.Module, Saveable):
+class BertDot_DualAdapter(nn.Module, BaseModelDot, Saveable):
     def __init__(self, config, init_path):
         super().__init__()
 
@@ -304,10 +180,6 @@ class CompoundModel(nn.Module, Saveable):
             self.output_embedding_size = config.hidden_size
 
         self.task_name = 'dpr'
-
-    def _init_weights(self, module):
-        self.bertQ.init_weights()
-        self.bertD.init_weights()
 
     def init_adapter_setup(self, config):
         self.bertQ.add_adapter(self.task_name + 'Q', config)
@@ -325,6 +197,12 @@ class CompoundModel(nn.Module, Saveable):
     def save_all_adapters(self, output_dir):
         self.bertQ.save_all_adapters(output_dir)
         self.bertD.save_all_adapters(output_dir)
+
+    def save_all_adapter_fusions(self, output_dir):
+        pass
+
+    def save_all_heads(self, output_dir):
+        pass
 
     def load_adapters(self, adapter_path):
         self.bertQ.freeze_model(freeze=True)
@@ -368,67 +246,7 @@ class CompoundModel(nn.Module, Saveable):
 
 
 
-class AdapterBertDot_dual(BaseModelDot, BertAdapterModel):
-    def __init__(self, config, model_argobj=None, adapter_path=None):
-        BaseModelDot.__init__(self, model_argobj)
-        BertAdapterModel.__init__(self, config)
-        if int(transformers.__version__[0]) == 4:
-            config.return_dict = False
-        if hasattr(config, "output_embedding_size"):
-            self.output_embedding_size = config.output_embedding_size
-        else:
-            self.output_embedding_size = config.hidden_size
-        print("output_embedding_size", self.output_embedding_size)
-
-        self.task_name = 'dpr'
-        # --adapter_path ./data/1000/dpr\
-
-    def load_my_adapters(self, adapter_pathQ, adapter_pathD):
-        name1 = self.load_adapter(adapter_pathQ)
-        name2 = self.load_adapter(adapter_pathD)
-        return name1, name2
-
-    def enable_training(self):
-        self.freeze_model(freeze=True)
-        self.train_adapter([self.task_name + 'D'])
-        self.train_adapter([self.task_name + 'Q'])
-
-        for (n, p) in self.named_parameters():
-            #if 'adapter' in n and p.requires_grad == True:
-            #    print(n, 'before training after loading in model function')
-            #    print(p.mean().item())
-            print(n, p.requires_grad)
-
-    def init_adapter_setup(self, config):
-        self.add_adapter(self.task_name + 'Q', config)
-        self.add_adapter(self.task_name + 'D', config)
-
-        self.freeze_model(freeze=True)
-
-        self.train_adapter([self.task_name + 'Q'])
-        self.train_adapter([self.task_name + 'D'])
-
-        self.active_adapters = ac.Split(self.task_name + 'Q', self.task_name + 'D', split_index=24)
-
-        print(self.adapter_summary())
-
-    def first(self, emb_all):
-        return emb_all[0][:, 0]
-
-    def query_emb(self, input_ids, attention_mask):
-        return self.first(self.bertQ(input_ids=input_ids, attention_mask=attention_mask))
-
-    def body_emb(self, input_ids, attention_mask):
-        return self.first(self.bertD(input_ids=input_ids, attention_mask=attention_mask))
-
-    def forward(self, input_ids, attention_mask, is_query, *args):
-        assert len(args) == 0
-        if is_query:
-            return self.query_emb(input_ids, attention_mask)
-        else:
-            return self.body_emb(input_ids, attention_mask)
-
-class CompoundModel_InBatch(CompoundModel):
+class BertDot_DualAdapter_InBatch(BertDot_DualAdapter):
     def forward(self, input_query_ids, query_attention_mask,
                 input_doc_ids, doc_attention_mask,
                 other_doc_ids=None, other_doc_attention_mask=None,
@@ -440,7 +258,7 @@ class CompoundModel_InBatch(CompoundModel):
                              rel_pair_mask, hard_pair_mask)
 
 
-class Compound_single_InBatch(Compound_single):
+class BertDot_SingleAdapter_InBatch(BertDot_SingleAdapter):
     def forward(self, input_query_ids, query_attention_mask,
                 input_doc_ids, doc_attention_mask,
                 other_doc_ids=None, other_doc_attention_mask=None,
@@ -450,40 +268,6 @@ class Compound_single_InBatch(Compound_single):
                              input_doc_ids, doc_attention_mask,
                              other_doc_ids, other_doc_attention_mask,
                              rel_pair_mask, hard_pair_mask)
-
-class AdapterBertDot_dual_InBatch(AdapterBertDot_dual):
-    def forward(self, input_query_ids, query_attention_mask,
-                input_doc_ids, doc_attention_mask,
-                other_doc_ids=None, other_doc_attention_mask=None,
-                rel_pair_mask=None, hard_pair_mask=None):
-        return inbatch_train(self.query_emb, self.body_emb,
-                             input_query_ids, query_attention_mask,
-                             input_doc_ids, doc_attention_mask,
-                             other_doc_ids, other_doc_attention_mask,
-                             rel_pair_mask, hard_pair_mask)
-
-class AdapterBertDot_InBatch(AdapterBertDot):
-    def forward(self, input_query_ids, query_attention_mask,
-                input_doc_ids, doc_attention_mask,
-                other_doc_ids=None, other_doc_attention_mask=None,
-                rel_pair_mask=None, hard_pair_mask=None):
-        return inbatch_train(self.query_emb, self.body_emb,
-                             input_query_ids, query_attention_mask,
-                             input_doc_ids, doc_attention_mask,
-                             other_doc_ids, other_doc_attention_mask,
-                             rel_pair_mask, hard_pair_mask)
-
-
-class AdapterBertDot_Rand(AdapterBertDot):
-    def forward(self, input_query_ids, query_attention_mask,
-                input_doc_ids, doc_attention_mask,
-                other_doc_ids=None, other_doc_attention_mask=None,
-                rel_pair_mask=None, hard_pair_mask=None):
-        return randneg_train(self.query_emb, self.body_emb,
-                             input_query_ids, query_attention_mask,
-                             input_doc_ids, doc_attention_mask,
-                             other_doc_ids, other_doc_attention_mask,
-                             hard_pair_mask)
 
 
 def inbatch_train(query_encode_func, doc_encode_func,

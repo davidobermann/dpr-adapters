@@ -8,14 +8,14 @@ import logging
 import os
 import numpy as np
 import torch
-from transformers import RobertaConfig, BertConfig
+from transformers import BertConfig
 from tqdm import tqdm
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.sampler import SequentialSampler
 
 from model import BertDot
 from dataset import (
-    TextTokenIdsCache, load_rel, SubsetSeqDataset, SequenceDataset,
+    TextTokenIdsCache, SubsetSeqDataset, SequenceDataset,
     single_get_collate_function
 )
 from retrieve_utils import (

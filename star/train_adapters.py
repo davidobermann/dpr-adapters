@@ -1,19 +1,15 @@
 # coding=utf-8
-import imp
 import sys
-import warnings
-from typing import Optional, Union, Dict, Any, List
+from typing import Optional
 
+import torch
 from transformers.adapters.utils import WEIGHTS_NAME
 from transformers.modeling_utils import unwrap_model
-import torch
+
+from adapter_model import Saveable
 
 sys.path.append("./")
-from model import BertDot_InBatch
 from transformers.adapters import AdapterTrainer
-
-from adapter_model import AdapterBertDot_InBatch, AdapterBertDot_dual_InBatch, CompoundModel, CompoundModel_InBatch, \
-    Compound_single_InBatch, Saveable
 
 import logging
 import os
@@ -21,17 +17,13 @@ from dataclasses import dataclass, field
 import transformers
 from transformers import (
     HfArgumentParser,
-    TrainingArguments,
     set_seed, BertTokenizer, BertConfig, AdapterArguments, PreTrainedModel, PfeifferConfig,
 )
 from transformers.integrations import TensorBoardCallback
 from dataset import TextTokenIdsCache, load_rel
 from dataset import (
-    TrainInbatchDataset,
-    TrainInbatchWithHardDataset,
     TrainInbatchWithRandDataset,
-    triple_get_collate_function,
-    dual_get_collate_function
+    triple_get_collate_function
 )
 from torch.utils.tensorboard import SummaryWriter
 
@@ -56,86 +48,6 @@ class MyTrainerCallback(TrainerCallback):
         control.should_save = True
 
 
-class AdapterDRTrainer(AdapterTrainer):
-
-    # overide the save to ensure saving the head as well
-    def _save(self, output_dir: Optional[str] = None, state_dict=None):
-        # If we are executing this function, we are the process zero, so we don't check for that.
-        output_dir = output_dir if output_dir is not None else self.args.output_dir
-        os.makedirs(output_dir, exist_ok=True)
-        logger.info(f"Saving model checkpoint to {output_dir}")
-        # Save a trained model and configuration using `save_pretrained()`.
-        # They can then be reloaded using `from_pretrained()`
-        if not isinstance(self.model, PreTrainedModel):
-            if isinstance(unwrap_model(self.model), PreTrainedModel):
-                if state_dict is None:
-                    state_dict = self.model.state_dict()
-                unwrap_model(self.model).save_pretrained(output_dir, state_dict=state_dict)
-            else:
-                logger.info("Trainer.model is not a `PreTrainedModel`, only saving its state dict.")
-                if state_dict is None:
-                    state_dict = self.model.state_dict()
-                torch.save(state_dict, os.path.join(output_dir, WEIGHTS_NAME))
-        else:
-            print(f"Adapter is beeing saved as checkpoint to {output_dir}")
-            self.model.save_all_adapters(output_dir, with_head=False)
-            if self.train_adapter_fusion:
-                self.model.save_all_adapter_fusions(output_dir)
-            if hasattr(self.model, "heads"):
-                print(f"Head is beeing saved as checkpoint to {output_dir}")
-                #self.model.bert.save_head(os.path.join(output_dir, 'head'), 'dpr')
-                print('adapter_weights:')
-                #for (n, p) in self.model.bert.named_parameters():
-                for (n, p) in self.model.named_parameters():
-                    if 'adapter' in n and p.requires_grad == True:
-                        print(n)
-                        print(p.mean().item())
-        if self.tokenizer is not None:
-            self.tokenizer.save_pretrained(output_dir)
-
-        # Good practice: save your training arguments together with the trained model
-        torch.save(self.args, os.path.join(output_dir, "training_args.bin"))
-
-    def create_optimizer_and_scheduler(self, num_training_steps: int):
-        """
-        Setup the optimizer and the learning rate scheduler.
-
-        We provide a reasonable default that works well. If you want to use something else, you can pass a tuple in the
-        Trainer's init through :obj:`optimizers`, or subclass and override this method in a subclass.
-        """
-        if self.optimizer is None:
-            no_decay = ["bias", "LayerNorm.weight"]
-            optimizer_grouped_parameters = [
-                {
-                    "params": [p for n, p in self.model.named_parameters() if not any(nd in n for nd in no_decay)],
-                    "weight_decay": self.args.weight_decay,
-                },
-                {
-                    "params": [p for n, p in self.model.named_parameters() if any(nd in n for nd in no_decay)],
-                    "weight_decay": 0.0,
-                },
-            ]
-            if self.args.optimizer_str == "adamw":
-                self.optimizer = AdamW(
-                    optimizer_grouped_parameters,
-                    lr=self.args.learning_rate,
-                    betas=(self.args.adam_beta1, self.args.adam_beta2),
-                    eps=self.args.adam_epsilon,
-                )
-            elif self.args.optimizer_str == "lamb":
-                self.optimizer = Lamb(
-                    optimizer_grouped_parameters,
-                    lr=self.args.learning_rate,
-                    eps=self.args.adam_epsilon
-                )
-            else:
-                raise NotImplementedError("Optimizer must be adamw or lamb")
-        if self.lr_scheduler is None:
-            self.lr_scheduler = get_linear_schedule_with_warmup(
-                self.optimizer, num_warmup_steps=self.args.warmup_steps, num_training_steps=num_training_steps
-            )
-
-
 class DRTrainer(Trainer):
 
     def _save(self, output_dir: Optional[str] = None, state_dict=None):
@@ -148,7 +60,9 @@ class DRTrainer(Trainer):
 
         if isinstance(self.model, Saveable):
             self.model.save_all_adapters(output_dir)
-        elif not isinstance(self.model, PreTrainedModel) and not isinstance(self.model, CompoundModel):
+            self.model.save_all_adapter_fusions(output_dir)
+            self.model.save_all_heads(output_dir)
+        elif not isinstance(self.model, PreTrainedModel) and not isinstance(self.model, Saveable):
             if isinstance(unwrap_model(self.model), PreTrainedModel):
                 if state_dict is None:
                     state_dict = self.model.state_dict()
@@ -250,7 +164,8 @@ class DataTrainingArguments:
 @dataclass
 class ModelArguments:
     adapter_path: str = field(default=None)
-    init_path: str = field(default='prajjwal1/bert-tiny')  # please use bm25 warmup model or roberta-base
+    init_path: str = field(default='prajjwal1/bert-tiny')  # please use bm25 warmup model or bert-base
+    reduction_factor: int = field(default=1)  # please use bm25 warmup model or bert-base
     # gradient_checkpointing: bool = field(default=False)
 
 
@@ -262,10 +177,10 @@ class MyTrainingArguments(TrainingArguments):
     optimizer_str: str = field(default="lamb")  # or lamb
     overwrite_output_dir: bool = field(default=False)
     batch_size: int = field(default=256, metadata={"help": "Batch size for training."})
-    workers: int = field(default=4, metadata={"help": "Number of Dataloader workers."})
+    workers: int = field(default=16, metadata={"help": "Number of Dataloader workers."})
     per_device_train_batch_size: int = field(
         default=256, metadata={"help": "Batch size per GPU/TPU core/CPU for training."})
-    dataloader_num_workers: int = field(default=8)
+    dataloader_num_workers: int = field(default=16)
     gradient_accumulation_steps: int = field(
         default=1,
         metadata={"help": "Number of updates steps to accumulate before performing a backward/update pass."}, )
@@ -363,18 +278,7 @@ def main():
         data_args.max_query_length, data_args.max_doc_length,
         rel_dict=rel_dict, padding=training_args.padding)
 
-    #model_class = AdapterBertDot_InBatch
-    #model_class = AdapterBertDot_dual_InBatch
-
-
-    #model = model_class.from_pretrained(
-    #    model_args.init_path,
-    #    config=config,
-        #adapter_path=None
-        #adapter_path=model_args.adapter_path
-    #)
-
-    model = CompoundModel_InBatch(config, model_args.init_path)
+    model = (config, model_args.init_path)
 
     if model_args.adapter_path != None:
         adapter_weights = torch.load(model_args.adapter_path + "/dprQ/pytorch_adapter.bin")
@@ -383,17 +287,8 @@ def main():
             print(n, 'after loading before training')
             print(adapter_weights[n].mean().item())
 
-    #model.freeze_model(freeze=True)
-    adapter_config = PfeifferConfig(reduction_factor=1)
-    #model.add_adapter(model.task_name, config=adapter_config)
-    #model.load_adapter(model_args.adapter_path)
 
-    #model.load_my_adapters(model_args.adapter_path, model_args.adapter_path)
-    #model.enable_training()
-    #model.train_adapter([model.task_name])
-    #model.init_adapter_setup(adapter_config)
-    #model.load_adapters(model_args.adapter_path)
-
+    adapter_config = PfeifferConfig(reduction_factor=model_args.reduction_factor)
     model.init_adapter_setup(adapter_config)
 
     # check if all the right things a frozen or unfrozen:
@@ -402,8 +297,6 @@ def main():
             print(n, 'before training after adding to model')
             print(p.mean().item())
 
-    # training_args.set_dataloader(num_workers=8)
-    # training_args.set_dataloader(train_batch_size=training_args.batch_size, num_workers=training_args.workers)
 
     # Initialize our Trainer
     trainer = DRTrainer(
