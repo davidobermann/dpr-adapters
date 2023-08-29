@@ -1,7 +1,7 @@
 import enum
 import os
 import sys
-from abc import ABC
+from abc import ABC, abstractmethod
 from typing import Union, Tuple
 
 from torch._C import dtype
@@ -234,8 +234,64 @@ class AdapterBertDot(BaseModelDot, BertAdapterModel):
         else:
             return self.body_emb(input_ids, attention_mask)
 
+class Saveable(ABC):
+    @abstractmethod
+    def save_all_adapters(self, output_dir):
+        pass
 
-class CompoundModel(nn.Module):
+class Compound_single(nn.Module, Saveable):
+    def __init__(self, config, init_path):
+        super().__init__()
+
+        self.bert = BertModel.from_pretrained(init_path, config=config)
+
+        if hasattr(config, "output_embedding_size"):
+            self.output_embedding_size = config.output_embedding_size
+        else:
+            self.output_embedding_size = config.hidden_size
+
+        self.task_name = 'dpr'
+
+    def _init_weights(self, module):
+        self.bert.init_weights()
+
+    def load_adapter(self, adapter_path):
+        name = self.bert.load_adapter(adapter_path)
+        self.bert.set_active_adapters([name])
+        print(self.bert.adapter_summary())
+
+    def init_adapter_setup(self, config):
+        self.bert.add_adapter(self.task_name, config=config)
+        self.bert.freeze_model(freeze=True)
+        self.bert.train_adapter([self.task_name])
+        print(self.bert.adapter_summary())
+
+    def save_all_adapters(self, output_dir):
+        self.bert.save_all_adapters(output_dir)
+
+    def first(self, emb_all):
+        return emb_all[0][:, 0]
+
+    def _text_encode(self, input_ids, attention_mask):
+        outputs1 = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+        return self.first(outputs1)
+
+    def query_emb(self, input_ids, attention_mask):
+        outputs1 = self._text_encode(input_ids=input_ids, attention_mask=attention_mask)
+        query1 = outputs1
+        return query1
+
+    def body_emb(self, input_ids, attention_mask):
+        return self.query_emb(input_ids, attention_mask)
+
+    def forward(self, input_ids, attention_mask, is_query, *args):
+        assert len(args) == 0
+        if is_query:
+            return self.query_emb(input_ids, attention_mask)
+        else:
+            return self.body_emb(input_ids, attention_mask)
+
+class CompoundModel(nn.Module, Saveable):
     def __init__(self, config, init_path):
         super().__init__()
 
@@ -247,19 +303,11 @@ class CompoundModel(nn.Module):
         else:
             self.output_embedding_size = config.hidden_size
 
+        self.task_name = 'dpr'
+
     def _init_weights(self, module):
         self.bertQ.init_weights()
         self.bertD.init_weights()
-
-    def resize_position_embeddings(self, new_num_position_embeddings: int):
-        self.bertQ.resize_position_embeddings(new_num_position_embeddings)
-        self.bertD.resize_position_embeddings(new_num_position_embeddings)
-
-    def get_position_embeddings(self) -> Union[nn.Embedding, Tuple[nn.Embedding]]:
-        return self.bertQ.get_position_embeddings(), self.bertD.get_position_embeddings()
-
-    def _reorder_cache(self, past, beam_idx):
-        pass
 
     def init_adapter_setup(self, config):
         self.bertQ.add_adapter(self.task_name + 'Q', config)
@@ -381,6 +429,18 @@ class AdapterBertDot_dual(BaseModelDot, BertAdapterModel):
             return self.body_emb(input_ids, attention_mask)
 
 class CompoundModel_InBatch(CompoundModel):
+    def forward(self, input_query_ids, query_attention_mask,
+                input_doc_ids, doc_attention_mask,
+                other_doc_ids=None, other_doc_attention_mask=None,
+                rel_pair_mask=None, hard_pair_mask=None):
+        return inbatch_train(self.query_emb, self.body_emb,
+                             input_query_ids, query_attention_mask,
+                             input_doc_ids, doc_attention_mask,
+                             other_doc_ids, other_doc_attention_mask,
+                             rel_pair_mask, hard_pair_mask)
+
+
+class Compound_single_InBatch(Compound_single):
     def forward(self, input_query_ids, query_attention_mask,
                 input_doc_ids, doc_attention_mask,
                 other_doc_ids=None, other_doc_attention_mask=None,

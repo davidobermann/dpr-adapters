@@ -33,7 +33,7 @@ def prediction(model, data_collator, args, test_dataset, embedding_memmap, ids_m
         batch_size=args.eval_batch_size*args.n_gpu,
         collate_fn=data_collator,
         drop_last=False,
-        num_workers=24
+        num_workers=40
     )
     # multi-gpu eval
     if args.n_gpu > 1:
@@ -117,7 +117,7 @@ def main():
     parser.add_argument("--output_dir", required=True)
     parser.add_argument("--max_query_length", type=int, default=32)
     parser.add_argument("--max_doc_length", type=int, default=256)
-    parser.add_argument("--eval_batch_size", type=int, default=32)
+    parser.add_argument("--eval_batch_size", type=int, default=512) #32
     parser.add_argument("--mode", type=str, choices=["train", "dev", "test", "lead"], default='dev')
     parser.add_argument("--topk", type=int, default=100)
     parser.add_argument("--no_cuda", action="store_true")

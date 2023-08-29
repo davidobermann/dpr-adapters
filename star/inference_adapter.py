@@ -13,7 +13,7 @@ from tqdm import tqdm
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.sampler import SequentialSampler
 
-from adapter_model import AdapterBertDot, AdapterBertDot_outside
+from adapter_model import AdapterBertDot, Compound_single
 from dataset import (
     TextTokenIdsCache, load_rel, SubsetSeqDataset, SequenceDataset,
     single_get_collate_function
@@ -33,7 +33,7 @@ def prediction(model, data_collator, args, test_dataset, embedding_memmap, ids_m
         batch_size=args.eval_batch_size*args.n_gpu,
         collate_fn=data_collator,
         drop_last=False,
-        num_workers=24
+        num_workers=40
     )
     # multi-gpu eval
     if args.n_gpu > 1:
@@ -117,7 +117,7 @@ def main():
     parser.add_argument("--output_dir", required=True)
     parser.add_argument("--max_query_length", type=int, default=32)
     parser.add_argument("--max_doc_length", type=int, default=256)
-    parser.add_argument("--eval_batch_size", type=int, default=32)
+    parser.add_argument("--eval_batch_size", type=int, default=512) #32
     parser.add_argument("--mode", type=str, choices=["train", "dev", "test", "lead"], default='dev')
     parser.add_argument("--topk", type=int, default=100)
     parser.add_argument("--no_cuda", action="store_true")
@@ -142,12 +142,15 @@ def main():
 
     config = BertConfig.from_pretrained(args.model_path, gradient_checkpointing=False)
     print('loading adapter: ' + args.adapter_path)
-    model = AdapterBertDot_outside.from_pretrained(args.model_path, config=config)
+    #model = AdapterBertDot_outside.from_pretrained(args.model_path, config=config)
 
-    name = model.load_adapter(args.adapter_path)
-    print(name)
-    model.set_active_adapters([name])
-    print(model.bert.adapter_summary())
+    #name = model.load_adapter(args.adapter_path)
+    #print(name)
+    #model.set_active_adapters([name])
+    #print(model.bert.adapter_summary())
+
+    model = Compound_single(config, args.model_path)
+    model.load_adapter(args.adapter_path)
 
     output_embedding_size = model.output_embedding_size
     model = model.to(args.device)

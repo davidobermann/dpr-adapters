@@ -12,7 +12,8 @@ sys.path.append("./")
 from model import BertDot_InBatch
 from transformers.adapters import AdapterTrainer
 
-from adapter_model import AdapterBertDot_InBatch, AdapterBertDot_dual_InBatch, CompoundModel, CompoundModel_InBatch
+from adapter_model import AdapterBertDot_InBatch, AdapterBertDot_dual_InBatch, CompoundModel, CompoundModel_InBatch, \
+    Compound_single_InBatch, Saveable
 
 import logging
 import os
@@ -145,7 +146,7 @@ class DRTrainer(Trainer):
         # Save a trained model and configuration using `save_pretrained()`.
         # They can then be reloaded using `from_pretrained()`
 
-        if isinstance(self.model, CompoundModel):
+        if isinstance(self.model, Saveable):
             self.model.save_all_adapters(output_dir)
         elif not isinstance(self.model, PreTrainedModel) and not isinstance(self.model, CompoundModel):
             if isinstance(unwrap_model(self.model), PreTrainedModel):
@@ -391,7 +392,9 @@ def main():
     #model.enable_training()
     #model.train_adapter([model.task_name])
     #model.init_adapter_setup(adapter_config)
-    model.load_adapters(model_args.adapter_path)
+    #model.load_adapters(model_args.adapter_path)
+
+    model.init_adapter_setup(adapter_config)
 
     # check if all the right things a frozen or unfrozen:
     for (n, p) in model.named_parameters():

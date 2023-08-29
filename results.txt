@@ -1,3 +1,21 @@
+DualAdapterbert-Small 4k steps
+#####################
+MRR @10: 0.11847779369627545
+QueriesRanked: 6980
+#####################
+
+DualAdapterbert-Tiny 7k steps
+#####################
+MRR @10: 0.07325715195342698
+QueriesRanked: 6980
+#####################
+
+SingleAdapterBert-Tiny nohead  4k steps
+#####################
+MRR @10: 0.10942488743348364
+QueriesRanked: 6980
+#####################
+
 SingleAdapterBert-Tiny nohead  8k steps, 20 min:
 #####################
 MRR @10: 0.1107595397280213
