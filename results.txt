@@ -1,10 +1,28 @@
+DualSingle-tiny query only doc only fused 7k each, 3k fuse:
+#####################
+MRR @10: 0.11924637285668827
+QueriesRanked: 6980
+#####################
+
+DualSingle-tiny document only 7k steps:
+#####################
+MRR @10: 0.07334169054441261
+QueriesRanked: 6980
+#####################
+
+DualSingle-tiny query only 7k steps:
+#####################
+MRR @10: 0.029774469004411695
+QueriesRanked: 6980
+#####################
+
 DualAdapter-tiny fused 4k steps:
 #####################
 MRR @10: 0.11113618274434917
 QueriesRanked: 6980
 #####################
 
-DualAdapterbert-Small 4k steps
+DualAdapterbert-Small 4k steps with 256 batch size
 #####################
 MRR @10: 0.11847779369627545
 QueriesRanked: 6980

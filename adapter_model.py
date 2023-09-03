@@ -273,6 +273,14 @@ class BertDot_DualFusion(nn.Module, Saveable, BaseModelDot):
         self.bert.train_adapter(Fuse(nameQ, nameD))
         print(self.bert.adapter_summary())
 
+    def init_adapter_setup(self, adapter_pathQ, adapter_pathD):
+        nameQ = self.bert.load_adapter(adapter_pathQ, with_head=False)
+        nameD = self.bert.load_adapter(adapter_pathD, with_head=False)
+        self.bert.add_adapter_fusion(Fuse(nameQ, nameD))
+        self.bert.set_active_adapters(Fuse(nameQ, nameD))
+        self.bert.train_adapter(Fuse(nameQ, nameD))
+        print(self.bert.adapter_summary())
+
     def save_all_adapters(self, output_dir):
         self.bert.save_all_adapters(output_dir)
 
@@ -304,6 +312,94 @@ class BertDot_DualFusion(nn.Module, Saveable, BaseModelDot):
         else:
             return self.body_emb(input_ids, attention_mask)
 
+
+class BertDot_DualSingle(nn.Module, BaseModelDot, Saveable):
+    def __init__(self, config, init_path, qod):
+        super().__init__()
+        self.qod = qod
+
+        self.bertQ = BertModel.from_pretrained(init_path, config=config)
+        self.bertD = BertModel.from_pretrained(init_path, config=config)
+
+        if hasattr(config, "output_embedding_size"):
+            self.output_embedding_size = config.output_embedding_size
+        else:
+            self.output_embedding_size = config.hidden_size
+
+        self.task_name = 'dpr'
+
+    def init_adapter_setup(self, config):
+        self.bertQ.freeze_model(freeze=True)
+        self.bertD.freeze_model(freeze=True)
+
+        if self.qod == 'Q':
+            self.bertQ.add_adapter(self.task_name + 'Q', config)
+            self.bertQ.train_adapter([self.task_name + 'Q'])
+        else:
+            self.bertD.add_adapter(self.task_name + 'D', config)
+            self.bertD.train_adapter([self.task_name + 'D'])
+
+        print(self.bertQ.adapter_summary())
+        print(self.bertD.adapter_summary())
+
+    def save_all_adapters(self, output_dir):
+        if self.qod == 'Q':
+            self.bertQ.save_all_adapters(output_dir)
+        else:
+            self.bertD.save_all_adapters(output_dir)
+
+    def save_all_adapter_fusions(self, output_dir):
+        pass
+
+    def save_all_heads(self, output_dir):
+        pass
+
+    def load_adapters(self, adapter_path):
+        self.bertQ.freeze_model(freeze=True)
+        self.bertD.freeze_model(freeze=True)
+
+        if self.qod == 'Q':
+            nameQ = self.bertQ.load_adapter(adapter_path + '/dprQ')
+            self.bertQ.set_active_adapters([nameQ])
+        else:
+            nameD = self.bertD.load_adapter(adapter_path + '/dprD')
+            self.bertD.set_active_adapters([nameD])
+
+        print(self.bertD.adapter_summary())
+        print(self.bertQ.adapter_summary())
+
+    def first(self, emb_all):
+        return emb_all[0][:, 0]
+
+    def query_emb(self, input_ids, attention_mask):
+        outputs1 = self.bertQ(input_ids=input_ids, attention_mask=attention_mask)
+        query1 = self.first(outputs1)
+        return query1
+
+    def body_emb(self, input_ids, attention_mask):
+        outputs1 = self.bertD(input_ids=input_ids, attention_mask=attention_mask)
+        body = self.first(outputs1)
+        return body
+
+    def forward(self, input_ids, attention_mask, is_query, *args):
+        assert len(args) == 0
+        if is_query:
+            return self.query_emb(input_ids, attention_mask)
+        else:
+            return self.body_emb(input_ids, attention_mask)
+
+
+
+class BertDot_DualSingle_InBatch(BertDot_DualSingle):
+    def forward(self, input_query_ids, query_attention_mask,
+                input_doc_ids, doc_attention_mask,
+                other_doc_ids=None, other_doc_attention_mask=None,
+                rel_pair_mask=None, hard_pair_mask=None):
+        return inbatch_train(self.query_emb, self.body_emb,
+                             input_query_ids, query_attention_mask,
+                             input_doc_ids, doc_attention_mask,
+                             other_doc_ids, other_doc_attention_mask,
+                             rel_pair_mask, hard_pair_mask)
 
 class BertDot_DualFusion_InBatch(BertDot_DualFusion):
     def forward(self, input_query_ids, query_attention_mask,

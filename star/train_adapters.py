@@ -34,7 +34,7 @@ from transformers import (
 from transformers import AdamW, get_linear_schedule_with_warmup
 from lamb import Lamb
 
-from adapter_model import Saveable, BertDot_DualFusion_InBatch
+from adapter_model import Saveable, BertDot_DualFusion_InBatch, BertDot_DualSingle_InBatch
 
 logger = logging.Logger(__name__)
 
@@ -163,6 +163,7 @@ class DataTrainingArguments:
 @dataclass
 class ModelArguments:
     adapter_path: str = field(default=None)
+    qod: str = field(default=None)
     init_path: str = field(default='prajjwal1/bert-tiny')  # please use bm25 warmup model or bert-base
     reduction_factor: int = field(default=1)  # please use bm25 warmup model or bert-base
     # gradient_checkpointing: bool = field(default=False)
@@ -278,9 +279,10 @@ def main():
         rel_dict=rel_dict, padding=training_args.padding)
 
     model = BertDot_DualFusion_InBatch(config, model_args.init_path)
-
+    #model = BertDot_DualSingle_InBatch(config, model_args.init_path, model_args.qod)
     adapter_config = PfeifferConfig(reduction_factor=model_args.reduction_factor)
-    model.init_adapter_setup(model_args.adapter_path)
+    model.init_adapter_setup(adapter_pathQ='./data/adapters/dualsingleQ/checkpoint-7000/dprQ',
+                             adapter_pathD='./data/adapters/dualsingleD/checkpoint-7000/dprD')
 
     # check if all the right things a frozen or unfrozen:
     for (n, p) in model.named_parameters():

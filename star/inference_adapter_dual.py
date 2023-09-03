@@ -3,7 +3,7 @@ import sys
 sys.path.append("./")
 import argparse
 import subprocess
-from adapter_model import BertDot_DualAdapter, BertDot_DualFusion
+from adapter_model import BertDot_DualAdapter, BertDot_DualFusion, BertDot_DualSingle
 import faiss
 import logging
 import os
@@ -115,6 +115,7 @@ def main():
     parser.add_argument("--adapter_path", required=True)
     parser.add_argument("--model_path", required=True)
     parser.add_argument("--output_dir", required=True)
+    parser.add_argument("--qod", type=str, default='Q')
     parser.add_argument("--max_query_length", type=int, default=32)
     parser.add_argument("--max_doc_length", type=int, default=256)
     parser.add_argument("--eval_batch_size", type=int, default=512) #32
@@ -132,6 +133,7 @@ def main():
     args.model_path = args.model_path
     args.adapter_path = args.adapter_path
     args.output_dir = args.output_dir
+    args.qod = args.qod
     args.query_memmap_path = os.path.join(args.output_dir, f"{args.mode}-query.memmap")
     args.queryids_memmap_path = os.path.join(args.output_dir, f"{args.mode}-query-id.memmap")
     args.output_rank_file = os.path.join(args.output_dir, f"{args.mode}.rank.tsv")
@@ -145,6 +147,8 @@ def main():
 
     model = BertDot_DualFusion(init_path=args.model_path, config=config)
     model.load_adapters(args.adapter_path)
+    #model = BertDot_DualSingle(init_path=args.model_path, config=config, qod=args.qod)
+    #model.load_adapters(args.adapter_path)
 
     output_embedding_size = model.output_embedding_size
     model = model.to(args.device)
