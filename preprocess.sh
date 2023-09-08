@@ -1,1 +1,1 @@
-python preprocess.py
+python preprocess_distil.py

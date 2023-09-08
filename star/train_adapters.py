@@ -1,12 +1,18 @@
 # coding=utf-8
 import sys
+sys.path.append("./")
+
+from adapter_model_distil import DistilBertDot_InBatch, DistilBertDot_SingleAdapter_InBatch, \
+    DistilBertDot_DualAdapter_InBatch, DistilBertDot_DualSingle_InBatch, DistilBertDot_DualFusion_InBatch
+
+
 from typing import Optional
 
 import torch
 from transformers.adapters.utils import WEIGHTS_NAME
 from transformers.modeling_utils import unwrap_model
 
-sys.path.append("./")
+from model import BertDot_Rand
 
 import logging
 import os
@@ -14,7 +20,8 @@ from dataclasses import dataclass, field
 import transformers
 from transformers import (
     HfArgumentParser,
-    set_seed, BertTokenizer, BertConfig, AdapterArguments, PreTrainedModel, PfeifferConfig,
+    set_seed, BertTokenizer, BertConfig, AdapterArguments, PreTrainedModel, PfeifferConfig, DistilBertTokenizer,
+    DistilBertConfig,
 )
 from transformers.integrations import TensorBoardCallback
 from dataset import TextTokenIdsCache, load_rel
@@ -34,7 +41,8 @@ from transformers import (
 from transformers import AdamW, get_linear_schedule_with_warmup
 from lamb import Lamb
 
-from adapter_model import Saveable, BertDot_DualFusion_InBatch, BertDot_DualSingle_InBatch
+from adapter_model import Saveable, BertDot_DualFusion_InBatch, BertDot_DualSingle_InBatch, \
+    BertDot_SingleAdapter_InBatch, BertDot_DualAdapter_InBatch, BertDot_SingleAdapter_Rand
 
 logger = logging.Logger(__name__)
 
@@ -125,10 +133,10 @@ class MyTensorBoardCallback(TensorBoardCallback):
         if self.tb_writer is not None:
             if "model" in kwargs:
                 model = kwargs["model"]
-                for (n, p) in model.named_parameters():
-                    if 'adapter' in n or 'dpr' in n:
-                        print(n, 'after loading on train start')
-                        print(p.mean().item())
+                #for (n, p) in model.named_parameters():
+                #    if 'adapter' in n or 'dpr' in n:
+                #        print(n, 'after loading on train start')
+                #        print(p.mean().item())
 
     def on_log(self, args, state, control, logs=None, **kwargs):
         super().on_log(args, state, control, logs, **kwargs)
@@ -162,10 +170,12 @@ class DataTrainingArguments:
 
 @dataclass
 class ModelArguments:
-    adapter_path: str = field(default=None)
+    model_type: int = field(default=None)
+    adapter_pathQ: str = field(default=None)
+    adapter_pathD: str = field(default=None)
     qod: str = field(default=None)
     init_path: str = field(default='prajjwal1/bert-tiny')  # please use bm25 warmup model or bert-base
-    reduction_factor: int = field(default=1)  # please use bm25 warmup model or bert-base
+    reduction_factor: int = field(default=16)  # please use bm25 warmup model or bert-base
     # gradient_checkpointing: bool = field(default=False)
 
 
@@ -249,13 +259,13 @@ def main():
     set_seed(training_args.seed)
     model_args.gradient_checkpointing = False
 
-    config = BertConfig.from_pretrained(
+    config = DistilBertConfig.from_pretrained(
         model_args.init_path,
         finetuning_task="msmarco",
         gradient_checkpointing=model_args.gradient_checkpointing
     )
 
-    tokenizer = BertTokenizer.from_pretrained(
+    tokenizer = DistilBertTokenizer.from_pretrained(
         model_args.init_path,
         use_fast=False,
     )
@@ -278,17 +288,29 @@ def main():
         data_args.max_query_length, data_args.max_doc_length,
         rel_dict=rel_dict, padding=training_args.padding)
 
-    model = BertDot_DualFusion_InBatch(config, model_args.init_path)
-    #model = BertDot_DualSingle_InBatch(config, model_args.init_path, model_args.qod)
     adapter_config = PfeifferConfig(reduction_factor=model_args.reduction_factor)
-    model.init_adapter_setup(adapter_pathQ='./data/adapters/dualsingleQ/checkpoint-7000/dprQ',
-                             adapter_pathD='./data/adapters/dualsingleD/checkpoint-7000/dprD')
+
+    if model_args.model_type == 0:
+        model = DistilBertDot_InBatch(config=config)
+    elif model_args.model_type == 1:
+        model = DistilBertDot_SingleAdapter_InBatch(config=config, init_path=model_args.init_path)
+        model.init_adapter_setup(config=adapter_config)
+    elif model_args.model_type == 2:
+        model = DistilBertDot_DualAdapter_InBatch(config=config, init_path=model_args.init_path)
+    elif model_args.model_type == 3:
+        model = DistilBertDot_DualSingle_InBatch(config=config, init_path=model_args.init_path, qod='Q')
+        model.init_adapter_setup(config=adapter_config)
+    elif model_args.model_type == 4:
+        model = DistilBertDot_DualSingle_InBatch(config=config, init_path=model_args.init_path, qod='D')
+    elif model_args.model_type == 5:
+        model = DistilBertDot_DualFusion_InBatch(config=config, init_path=model_args.init_path)
+        model.init_adapters_setup(model_args.adapter_pathQ, model_args.adapter_pathD)
 
     # check if all the right things a frozen or unfrozen:
-    for (n, p) in model.named_parameters():
-        if 'adapter' in n and p.requires_grad == True:
-            print(n, 'before training after adding to model')
-            print(p.mean().item())
+    #for (n, p) in model.named_parameters():
+    #    if 'adapter' in n and p.requires_grad == True:
+    #        print(n, 'before training after adding to model')
+    #        print(p.mean().item())
 
 
     # Initialize our Trainer

@@ -85,9 +85,6 @@ class BertDot(BaseModelDot, BertPreTrainedModel):
             self.output_embedding_size = config.hidden_size
         print("output_embedding_size", self.output_embedding_size)
 
-        for (n, p) in self.named_parameters():
-            print(n, p.requires_grad)
-
     def first(self, emb_all):
         return emb_all[0][:, 0]
 

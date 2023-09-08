@@ -1,0 +1,19 @@
+python ./star/train_adapters.py --do_train \
+    --init_path distilbert-base-uncased \
+    --model_type 1\
+    --reduction_factor 16 \
+    --max_query_length 24 \
+    --max_doc_length 120 \
+    --dataloader_num_workers 16 \
+    --per_device_train_batch_size 256 \
+    --batch_size 256 \
+    --save_steps 1000 \
+    --preprocess_dir ./dataset/distil \
+    --output_dir ./data/single \
+    --logging_dir ./data/single/log \
+    --optimizer_str lamb \
+    --learning_rate 1e-3 \
+    --weight_decay 1e-4 \
+    --fp16 \
+    --train_adapter \
+    --overwrite_output_dir

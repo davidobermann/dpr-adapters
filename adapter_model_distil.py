@@ -1,8 +1,7 @@
 import sys
 from abc import ABC, abstractmethod
 
-from transformers import BertModel
-from transformers.adapters import PredictionHead
+from transformers import DistilBertModel, DistilBertPreTrainedModel
 from transformers.adapters.composition import Fuse
 
 sys.path += ['./']
@@ -88,36 +87,48 @@ class Saveable(ABC):
     def save_all_heads(self, output_dir):
         pass
 
+class DistilBertDot(BaseModelDot, DistilBertPreTrainedModel):
+    def __init__(self, config, model_argobj=None):
+        BaseModelDot.__init__(self, model_argobj)
+        DistilBertPreTrainedModel.__init__(self, config)
 
-class DPRHead(PredictionHead):
-    def __init__(self, model, head_name, **kwargs):
-        super().__init__(head_name)
-
-        config = model.config
-
+        self.bert = DistilBertModel(config)
         if hasattr(config, "output_embedding_size"):
             self.output_embedding_size = config.output_embedding_size
         else:
             self.output_embedding_size = config.hidden_size
-
-        self.hiddensize = config.hidden_size
-
-        self.embeddingHead = nn.Linear(self.hiddensize, self.output_embedding_size)
-        self.norm = nn.LayerNorm(self.output_embedding_size)
+        print("output_embedding_size", self.output_embedding_size)
 
     def first(self, emb_all):
         return emb_all[0][:, 0]
 
-    def forward(self, outputs, cls_output=None, attention_mask=None, return_dict=False, **kwargs):
-        full_emb = self.first(outputs)
-        head_output = self.norm(self.embeddingHead(full_emb))
-        return head_output
+    def _text_encode(self, input_ids, attention_mask):
+        outputs1 = self.bert(input_ids=input_ids,
+                             attention_mask=attention_mask)
+        return self.first(outputs1)
 
-class BertDot_SingleAdapter(nn.Module, Saveable, BaseModelDot):
+    def query_emb(self, input_ids, attention_mask):
+        outputs1 = self._text_encode(input_ids=input_ids,
+                                     attention_mask=attention_mask)
+        query1 = outputs1
+        return query1
+
+    def body_emb(self, input_ids, attention_mask):
+        return self.query_emb(input_ids, attention_mask)
+
+    def forward(self, input_ids, attention_mask, is_query, *args):
+        assert len(args) == 0
+        if is_query:
+            return self.query_emb(input_ids, attention_mask)
+        else:
+            return self.body_emb(input_ids, attention_mask)
+
+
+class DistilBertDot_SingleAdapter(nn.Module, Saveable, BaseModelDot):
     def __init__(self, config, init_path):
         super().__init__()
 
-        self.bert = BertModel.from_pretrained(init_path, config=config)
+        self.bert = DistilBertModel.from_pretrained(init_path, config=config)
 
         if hasattr(config, "output_embedding_size"):
             self.output_embedding_size = config.output_embedding_size
@@ -168,12 +179,12 @@ class BertDot_SingleAdapter(nn.Module, Saveable, BaseModelDot):
         else:
             return self.body_emb(input_ids, attention_mask)
 
-class BertDot_DualAdapter(nn.Module, BaseModelDot, Saveable):
+class DistilBertDot_DualAdapter(nn.Module, BaseModelDot, Saveable):
     def __init__(self, config, init_path):
         super().__init__()
 
-        self.bertQ = BertModel.from_pretrained(init_path, config=config)
-        self.bertD = BertModel.from_pretrained(init_path, config=config)
+        self.bertQ = DistilBertModel.from_pretrained(init_path, config=config)
+        self.bertD = DistilBertModel.from_pretrained(init_path, config=config)
 
         if hasattr(config, "output_embedding_size"):
             self.output_embedding_size = config.output_embedding_size
@@ -245,11 +256,11 @@ class BertDot_DualAdapter(nn.Module, BaseModelDot, Saveable):
         else:
             return self.body_emb(input_ids, attention_mask)
 
-class BertDot_DualFusion(nn.Module, Saveable, BaseModelDot):
+class DistilBertDot_DualFusion(nn.Module, Saveable, BaseModelDot):
     def __init__(self, config, init_path):
         super().__init__()
 
-        self.bert = BertModel.from_pretrained(init_path, config=config)
+        self.bert = DistilBertModel.from_pretrained(init_path, config=config)
 
         if hasattr(config, "output_embedding_size"):
             self.output_embedding_size = config.output_embedding_size
@@ -313,13 +324,13 @@ class BertDot_DualFusion(nn.Module, Saveable, BaseModelDot):
             return self.body_emb(input_ids, attention_mask)
 
 
-class BertDot_DualSingle(nn.Module, BaseModelDot, Saveable):
+class DistilBertDot_DualSingle(nn.Module, BaseModelDot, Saveable):
     def __init__(self, config, init_path, qod):
         super().__init__()
         self.qod = qod
 
-        self.bertQ = BertModel.from_pretrained(init_path, config=config)
-        self.bertD = BertModel.from_pretrained(init_path, config=config)
+        self.bertQ = DistilBertModel.from_pretrained(init_path, config=config)
+        self.bertD = DistilBertModel.from_pretrained(init_path, config=config)
 
         if hasattr(config, "output_embedding_size"):
             self.output_embedding_size = config.output_embedding_size
@@ -390,7 +401,7 @@ class BertDot_DualSingle(nn.Module, BaseModelDot, Saveable):
 
 
 
-class BertDot_DualSingle_InBatch(BertDot_DualSingle):
+class DistilBertDot_DualSingle_InBatch(DistilBertDot_DualSingle):
     def forward(self, input_query_ids, query_attention_mask,
                 input_doc_ids, doc_attention_mask,
                 other_doc_ids=None, other_doc_attention_mask=None,
@@ -401,7 +412,7 @@ class BertDot_DualSingle_InBatch(BertDot_DualSingle):
                              other_doc_ids, other_doc_attention_mask,
                              rel_pair_mask, hard_pair_mask)
 
-class BertDot_DualFusion_InBatch(BertDot_DualFusion):
+class DistilBertDot_DualFusion_InBatch(DistilBertDot_DualFusion):
     def forward(self, input_query_ids, query_attention_mask,
                 input_doc_ids, doc_attention_mask,
                 other_doc_ids=None, other_doc_attention_mask=None,
@@ -412,7 +423,7 @@ class BertDot_DualFusion_InBatch(BertDot_DualFusion):
                              other_doc_ids, other_doc_attention_mask,
                              rel_pair_mask, hard_pair_mask)
 
-class BertDot_DualAdapter_InBatch(BertDot_DualAdapter):
+class DistilBertDot_DualAdapter_InBatch(DistilBertDot_DualAdapter):
     def forward(self, input_query_ids, query_attention_mask,
                 input_doc_ids, doc_attention_mask,
                 other_doc_ids=None, other_doc_attention_mask=None,
@@ -423,7 +434,7 @@ class BertDot_DualAdapter_InBatch(BertDot_DualAdapter):
                              other_doc_ids, other_doc_attention_mask,
                              rel_pair_mask, hard_pair_mask)
 
-class BertDot_SingleAdapter_InBatch(BertDot_SingleAdapter):
+class DistilBertDot_SingleAdapter_InBatch(DistilBertDot_SingleAdapter):
     def forward(self, input_query_ids, query_attention_mask,
                 input_doc_ids, doc_attention_mask,
                 other_doc_ids=None, other_doc_attention_mask=None,
@@ -434,17 +445,16 @@ class BertDot_SingleAdapter_InBatch(BertDot_SingleAdapter):
                              other_doc_ids, other_doc_attention_mask,
                              rel_pair_mask, hard_pair_mask)
 
-
-class BertDot_SingleAdapter_Rand(BertDot_SingleAdapter):
+class DistilBertDot_InBatch(DistilBertDot):
     def forward(self, input_query_ids, query_attention_mask,
-            input_doc_ids, doc_attention_mask,
-            other_doc_ids=None, other_doc_attention_mask=None,
-            rel_pair_mask=None, hard_pair_mask=None):
-        return randneg_train(self.query_emb, self.body_emb,
-            input_query_ids, query_attention_mask,
-            input_doc_ids, doc_attention_mask,
-            other_doc_ids, other_doc_attention_mask,
-            hard_pair_mask)
+                input_doc_ids, doc_attention_mask,
+                other_doc_ids=None, other_doc_attention_mask=None,
+                rel_pair_mask=None, hard_pair_mask=None):
+        return inbatch_train(self.query_emb, self.body_emb,
+                             input_query_ids, query_attention_mask,
+                             input_doc_ids, doc_attention_mask,
+                             other_doc_ids, other_doc_attention_mask,
+                             rel_pair_mask, hard_pair_mask)
 
 
 def inbatch_train(query_encode_func, doc_encode_func,

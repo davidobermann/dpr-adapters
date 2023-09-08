@@ -1,15 +1,16 @@
 # coding=utf-8
 import sys
 sys.path.append("./")
+from adapter_model_distil import DistilBertDot, DistilBertDot_SingleAdapter, DistilBertDot_DualAdapter, DistilBertDot_DualSingle, \
+    DistilBertDot_DualFusion
 import argparse
 import subprocess
-from adapter_model import BertDot_DualAdapter, BertDot_DualFusion, BertDot_DualSingle
 import faiss
 import logging
 import os
 import numpy as np
 import torch
-from transformers import BertConfig
+from transformers import BertConfig, DistilBertConfig
 from tqdm import tqdm
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.sampler import SequentialSampler
@@ -112,9 +113,10 @@ def doc_inference(model, args, embedding_size):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--preprocess_dir", required=True)
-    parser.add_argument("--adapter_path", required=True)
     parser.add_argument("--model_path", required=True)
     parser.add_argument("--output_dir", required=True)
+    parser.add_argument("--model_type", required=True)
+    parser.add_argument("--adapter_path", default=None)
     parser.add_argument("--qod", type=str, default='Q')
     parser.add_argument("--max_query_length", type=int, default=32)
     parser.add_argument("--max_doc_length", type=int, default=256)
@@ -131,6 +133,7 @@ def main():
     
     args.preprocess_dir = args.preprocess_dir
     args.model_path = args.model_path
+    args.ini_path = args.model_path
     args.adapter_path = args.adapter_path
     args.output_dir = args.output_dir
     args.qod = args.qod
@@ -142,13 +145,32 @@ def main():
     logger.info(args)
     os.makedirs(args.output_dir, exist_ok=True)
 
-    config = BertConfig.from_pretrained(args.model_path, gradient_checkpointing=False)
-    print('loading adapter: ' + args.adapter_path)
+    config = DistilBertConfig.from_pretrained(args.model_path, gradient_checkpointing=False)
+    #print('loading adapter: ' + args.adapter_path)
 
-    model = BertDot_DualFusion(init_path=args.model_path, config=config)
-    model.load_adapters(args.adapter_path)
+    #model = BertDot_DualFusion(init_path=args.model_path, config=config)
+    #model = BertDot_SingleAdapter(init_path=args.model_path, config=config)
+    #model.load_adapters(args.adapter_path)
     #model = BertDot_DualSingle(init_path=args.model_path, config=config, qod=args.qod)
     #model.load_adapters(args.adapter_path)
+
+    if args.model_type == 0:
+        model = DistilBertDot.from_pretrained(args.model_path, config=config)
+    elif args.model_type == 1:
+        model = DistilBertDot_SingleAdapter(config=config, init_path=args.init_path)
+        model.load_adapters(args.adapter_path)
+    elif args.model_type == 2:
+        model = DistilBertDot_DualAdapter(config=config, init_path=args.init_path)
+        model.load_adapters(args.adapter_path)
+    elif args.model_type == 3:
+        model = DistilBertDot_DualSingle(config=config, init_path=args.init_path, qod='Q')
+        model.load_adapters(args.adapter_path)
+    elif args.model_type == 4:
+        model = DistilBertDot_DualSingle(config=config, init_path=args.init_path, qod='D')
+        model.load_adapters(args.adapter_path)
+    elif args.model_type == 5:
+        model = DistilBertDot_DualFusion(config=config, init_path=args.init_path)
+        model.load_adapters(args.adapter_path)
 
     output_embedding_size = model.output_embedding_size
     model = model.to(args.device)
