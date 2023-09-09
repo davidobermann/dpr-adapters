@@ -2,17 +2,13 @@
 import sys
 sys.path.append("./")
 
-from adapter_model_distil import DistilBertDot_InBatch, DistilBertDot_SingleAdapter_InBatch, \
-    DistilBertDot_DualAdapter_InBatch, DistilBertDot_DualSingle_InBatch, DistilBertDot_DualFusion_InBatch
-
-
 from typing import Optional
 
 import torch
 from transformers.adapters.utils import WEIGHTS_NAME
 from transformers.modeling_utils import unwrap_model
 
-from model import BertDot_Rand
+from model import BertDot_InBatch
 
 import logging
 import os
@@ -20,9 +16,7 @@ from dataclasses import dataclass, field
 import transformers
 from transformers import (
     HfArgumentParser,
-    set_seed, BertTokenizer, BertConfig, AdapterArguments, PreTrainedModel, PfeifferConfig, DistilBertTokenizer,
-    DistilBertConfig,
-)
+    set_seed, BertTokenizer, BertConfig, AdapterArguments, PreTrainedModel, PfeifferConfig, )
 from transformers.integrations import TensorBoardCallback
 from dataset import TextTokenIdsCache, load_rel
 from dataset import (
@@ -42,7 +36,7 @@ from transformers import AdamW, get_linear_schedule_with_warmup
 from lamb import Lamb
 
 from adapter_model import Saveable, BertDot_DualFusion_InBatch, BertDot_DualSingle_InBatch, \
-    BertDot_SingleAdapter_InBatch, BertDot_DualAdapter_InBatch, BertDot_SingleAdapter_Rand
+    BertDot_SingleAdapter_InBatch, BertDot_DualAdapter_InBatch, BertDot_Dual_InBatch
 
 logger = logging.Logger(__name__)
 
@@ -175,7 +169,7 @@ class ModelArguments:
     adapter_pathD: str = field(default=None)
     qod: str = field(default=None)
     init_path: str = field(default='prajjwal1/bert-tiny')  # please use bm25 warmup model or bert-base
-    reduction_factor: int = field(default=16)  # please use bm25 warmup model or bert-base
+    reduction_factor: int = field(default=8)  # please use bm25 warmup model or bert-base
     # gradient_checkpointing: bool = field(default=False)
 
 
@@ -259,13 +253,13 @@ def main():
     set_seed(training_args.seed)
     model_args.gradient_checkpointing = False
 
-    config = DistilBertConfig.from_pretrained(
+    config = BertConfig.from_pretrained(
         model_args.init_path,
         finetuning_task="msmarco",
         gradient_checkpointing=model_args.gradient_checkpointing
     )
 
-    tokenizer = DistilBertTokenizer.from_pretrained(
+    tokenizer = BertTokenizer.from_pretrained(
         model_args.init_path,
         use_fast=False,
     )
@@ -291,20 +285,24 @@ def main():
     adapter_config = PfeifferConfig(reduction_factor=model_args.reduction_factor)
 
     if model_args.model_type == 0:
-        model = DistilBertDot_InBatch(config=config)
+        model = BertDot_InBatch(config=config)
     elif model_args.model_type == 1:
-        model = DistilBertDot_SingleAdapter_InBatch(config=config, init_path=model_args.init_path)
+        model = BertDot_SingleAdapter_InBatch(config=config, init_path=model_args.init_path)
         model.init_adapter_setup(config=adapter_config)
     elif model_args.model_type == 2:
-        model = DistilBertDot_DualAdapter_InBatch(config=config, init_path=model_args.init_path)
+        model = BertDot_DualAdapter_InBatch(config=config, init_path=model_args.init_path)
+        model.init_adapter_setup(config=adapter_config)
     elif model_args.model_type == 3:
-        model = DistilBertDot_DualSingle_InBatch(config=config, init_path=model_args.init_path, qod='Q')
+        model = BertDot_DualSingle_InBatch(config=config, init_path=model_args.init_path, qod='Q')
         model.init_adapter_setup(config=adapter_config)
     elif model_args.model_type == 4:
-        model = DistilBertDot_DualSingle_InBatch(config=config, init_path=model_args.init_path, qod='D')
+        model = BertDot_DualSingle_InBatch(config=config, init_path=model_args.init_path, qod='D')
+        model.init_adapter_setup(config=adapter_config)
     elif model_args.model_type == 5:
-        model = DistilBertDot_DualFusion_InBatch(config=config, init_path=model_args.init_path)
+        model = BertDot_DualFusion_InBatch(config=config, init_path=model_args.init_path)
         model.init_adapters_setup(model_args.adapter_pathQ, model_args.adapter_pathD)
+    elif model_args.model_type == 6:
+        model = BertDot_Dual_InBatch(config=config, init_path=model_args.init_path)
 
     # check if all the right things a frozen or unfrozen:
     #for (n, p) in model.named_parameters():
