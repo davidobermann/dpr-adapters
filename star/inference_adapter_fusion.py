@@ -1,4 +1,5 @@
 # coding=utf-8
+import csv
 import sys
 sys.path.append("./")
 
@@ -159,42 +160,19 @@ def main():
     #model = BertDot_DualSingle(init_path=args.model_path, config=config, qod=args.qod)
     #model.load_adapters(args.adapter_path)
 
-    model = None
-    if args.model_type == 0:
-        model = BertDot.from_pretrained(args.model_path, config=config)
-    elif args.model_type == 1:
-        model = BertDot_SingleAdapter(config=config, init_path=args.init_path)
-        model.load_adapters(args.adapter_path)
-    elif args.model_type == 2:
-        model = BertDot_DualAdapter(config=config, init_path=args.init_path)
-        model.load_adapters(args.adapter_path)
-    elif args.model_type == 3:
-        model = BertDot_DualSingle(config=config, init_path=args.init_path, qod='Q')
-        model.load_adapters(args.adapter_path)
-    elif args.model_type == 4:
-        model = BertDot_DualSingle(config=config, init_path=args.init_path, qod='D')
-        model.load_adapters(args.adapter_path)
-    elif args.model_type == 5:
-        model = BertDot_DualFusion(config=config, init_path=args.init_path)
-        model.load_adapters(args.adapter_path)
-    elif args.model_type == 6:
-        config = BertConfig.from_pretrained(args.model_path+'/dprQ', gradient_checkpointing=False)
-        model = BertDot_Dual(config=config, init_path=args.init_path)
-    elif args.model_type == 7:
-        model = BertDot_DualSingle_Full(config=config, init_path=args.init_path, qod='Q')
-        model.load_adapters(args.adapter_path)
-    elif args.model_type == 8:
-        model = BertDot_DualSingle_Full(config=config, init_path=args.init_path, qod='D')
-        model.load_adapters(args.adapter_path)
+
+    model = BertDot_DualFusion(config=config, init_path=args.init_path)
+    #model.load_adapters(args.adapter_path)
+    model.load_adapters_log_attentions(args.adapter_path, output_path=args.output_dir + '/activations.csv')
 
     output_embedding_size = model.output_embedding_size
     model = model.to(args.device)
     query_inference(model, args, output_embedding_size)
     doc_inference(model, args, output_embedding_size)
-    
     model = None
     torch.cuda.empty_cache()
 
+    '''
     doc_embeddings = np.memmap(args.doc_memmap_path, 
         dtype=np.float32, mode="r")
     doc_ids = np.memmap(args.docid_memmap_path, 
@@ -218,6 +196,7 @@ def main():
         for qid, neighbors in zip(query_ids, nearest_neighbors):
             for idx, pid in enumerate(neighbors):
                 outputfile.write(f"{qid}\t{pid}\t{idx+1}\n")
+    '''
 
 
 if __name__ == "__main__":

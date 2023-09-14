@@ -1,11 +1,13 @@
+export CUDA_VISIBLE_DEVICES=0,1,2,3
+
 python ./star/inference_adapter_dual.py \
         --mode dev \
-        --model_type 0 \
-        --preprocess_dir ./dataset/distil \
-        --model_path ./data/base2/checkpoint-40000 \
-        --output_dir ./data/base2/eval/eval40k \
-        --faiss_gpus 3
+        --preprocess_dir ./dataset/bert \
+        --model_path google/bert_uncased_L-4_H-256_A-4 \
+        --model_type 5 \
+        --adapter_path ./data/fuse_dual/checkpoint-194000 \
+        --output_dir ./data/fuse_dual/eval/eval194k_log
 
 python ./msmarco_eval.py \
-        ./dataset/distil/dev-qrel.tsv \
-        ./data/base2/eval/eval40k/dev.rank.tsv
+        ./dataset/bert/dev-qrel.tsv \
+        ./data/fuse_dual_single/eval/eval196k_log/dev.rank.tsv

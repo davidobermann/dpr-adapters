@@ -36,7 +36,7 @@ from transformers import AdamW, get_linear_schedule_with_warmup
 from lamb import Lamb
 
 from adapter_model import Saveable, BertDot_DualFusion_InBatch, BertDot_DualSingle_InBatch, \
-    BertDot_SingleAdapter_InBatch, BertDot_DualAdapter_InBatch, BertDot_Dual_InBatch
+    BertDot_SingleAdapter_InBatch, BertDot_DualAdapter_InBatch, BertDot_Dual_InBatch, BertDot_DualSingle_Full_InBatch
 
 logger = logging.Logger(__name__)
 
@@ -196,7 +196,7 @@ class MyTrainingArguments(TrainingArguments):
     adam_epsilon: float = field(default=1e-8, metadata={"help": "Epsilon for Adam optimizer."})
     max_grad_norm: float = field(default=1.0, metadata={"help": "Max gradient norm."})
 
-    num_train_epochs: float = field(default=100.0, metadata={"help": "Total number of training epochs to perform."})
+    num_train_epochs: float = field(default=300.0, metadata={"help": "Total number of training epochs to perform."})
     max_steps: int = field(
         default=-1,
         metadata={"help": "If > 0: set total number of training steps to perform. Override num_train_epochs."},
@@ -286,23 +286,35 @@ def main():
 
     if model_args.model_type == 0:
         model = BertDot_InBatch(config=config)
+
     elif model_args.model_type == 1:
         model = BertDot_SingleAdapter_InBatch(config=config, init_path=model_args.init_path)
         model.init_adapter_setup(config=adapter_config)
+
     elif model_args.model_type == 2:
         model = BertDot_DualAdapter_InBatch(config=config, init_path=model_args.init_path)
         model.init_adapter_setup(config=adapter_config)
+
     elif model_args.model_type == 3:
         model = BertDot_DualSingle_InBatch(config=config, init_path=model_args.init_path, qod='Q')
         model.init_adapter_setup(config=adapter_config)
+
     elif model_args.model_type == 4:
         model = BertDot_DualSingle_InBatch(config=config, init_path=model_args.init_path, qod='D')
         model.init_adapter_setup(config=adapter_config)
+
     elif model_args.model_type == 5:
         model = BertDot_DualFusion_InBatch(config=config, init_path=model_args.init_path)
         model.init_adapters_setup(model_args.adapter_pathQ, model_args.adapter_pathD)
+
     elif model_args.model_type == 6:
         model = BertDot_Dual_InBatch(config=config, init_path=model_args.init_path)
+
+    elif model_args.model_type == 7:
+        model = BertDot_DualSingle_Full_InBatch(config=config, init_path=model_args.init_path, qod='Q')
+
+    elif model_args.model_type == 8:
+        model = BertDot_DualSingle_Full_InBatch(config=config, init_path=model_args.init_path, qod='D')
 
     # check if all the right things a frozen or unfrozen:
     #for (n, p) in model.named_parameters():

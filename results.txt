@@ -1,3 +1,53 @@
+BertMini-DualSingle-Fused: side note, still some potential
+#####################
+MRR @10: 0.21058841588211152
+QueriesRanked: 6980
+#####################
+
+BertMini-Fused:
+#####################
+MRR @10: 0.20553440669486503
+QueriesRanked: 6980
+#####################
+
+BertMini-Dual DAdapterOnly:
+#####################
+MRR @10: 0.12106085414108364
+QueriesRanked: 6980
+#####################
+
+BertMini-Dual-QAdapterOnly:
+#####################
+MRR @10: 0.044886694410333355
+QueriesRanked: 6980
+#####################
+
+BertMini-Dual-Adapter:
+#####################
+MRR @10: 0.12046095420020965
+QueriesRanked: 6980
+#####################
+
+BertMini-Single-Adapter:
+#####################
+MRR @10: 0.19270648565061144
+QueriesRanked: 6980
+#####################
+
+BertMini-DualEncoder-BaseLine:
+#####################
+MRR @10: 0.2200399099467857
+QueriesRanked: 6980
+#####################
+
+BertMini-Baseline:
+#####################
+MRR @10: 0.18975911902487844
+QueriesRanked: 6980
+#####################
+
+##############################################################################
+
 SingleAdapter-tiny-inbatch 90k8:
 #####################
 MRR @10: 0.14738066812207296

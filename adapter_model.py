@@ -1,7 +1,8 @@
+import csv
 import sys
 from abc import ABC, abstractmethod
 
-from transformers import BertModel
+from transformers import BertModel, BertConfig
 from transformers.adapters import PredictionHead
 from transformers.adapters.composition import Fuse
 
@@ -113,6 +114,7 @@ class DPRHead(PredictionHead):
         head_output = self.norm(self.embeddingHead(full_emb))
         return head_output
 
+
 class BertDot_SingleAdapter(nn.Module, Saveable, BaseModelDot):
     def __init__(self, config, init_path):
         super().__init__()
@@ -167,6 +169,7 @@ class BertDot_SingleAdapter(nn.Module, Saveable, BaseModelDot):
             return self.query_emb(input_ids, attention_mask)
         else:
             return self.body_emb(input_ids, attention_mask)
+
 
 class BertDot_DualAdapter(nn.Module, BaseModelDot, Saveable):
     def __init__(self, config, init_path):
@@ -245,6 +248,7 @@ class BertDot_DualAdapter(nn.Module, BaseModelDot, Saveable):
         else:
             return self.body_emb(input_ids, attention_mask)
 
+
 class BertDot_DualFusion(nn.Module, Saveable, BaseModelDot):
     def __init__(self, config, init_path):
         super().__init__()
@@ -257,6 +261,8 @@ class BertDot_DualFusion(nn.Module, Saveable, BaseModelDot):
             self.output_embedding_size = config.hidden_size
 
         self.task_name = 'dpr'
+        self.output_adapter_fusion_attentions = False
+        self.log_path = None
 
     def load_adapters(self, adapter_path):
         nameQ = self.bert.load_adapter(adapter_path + '/dprQ', with_head=False)
@@ -264,6 +270,14 @@ class BertDot_DualFusion(nn.Module, Saveable, BaseModelDot):
         self.bert.load_adapter_fusion(adapter_path)
         self.bert.set_active_adapters(Fuse(nameQ, nameD))
         print(self.bert.adapter_summary())
+
+    def load_adapters_log_attentions(self, adapter_path, output_path):
+        self.load_adapters(adapter_path)
+        self.output_adapter_fusion_attentions = True
+        self.log_path = output_path
+        with open(self.log_path, 'w') as f:
+            writer = csv.writer(f)
+            writer.writerow(['layer', 'q_act', 'd_act', 'is_query'])
 
     def init_adapter_setup(self, adapter_path):
         nameQ = self.bert.load_adapter(adapter_path + '/dprQ', with_head=False)
@@ -293,17 +307,32 @@ class BertDot_DualFusion(nn.Module, Saveable, BaseModelDot):
     def first(self, emb_all):
         return emb_all[0][:, 0]
 
-    def _text_encode(self, input_ids, attention_mask):
-        outputs1 = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+    def _text_encode(self, input_ids, attention_mask, is_query):
+        if not self.output_adapter_fusion_attentions:
+            outputs1 = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+        else:
+            outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask,
+                                output_adapter_fusion_attentions=True)
+            attention_scores = outputs.adapter_fusion_attentions["dprQ,dprD"]
+            with open(self.log_path, 'a') as f:
+                writer = csv.writer(f)
+                for layer in attention_scores.keys():
+                    for entry in attention_scores[layer]['output_adapter']:
+                        for value in entry:
+                            writer.writerow([layer, value[0], value[1], is_query])
+
+            outputs1 = outputs
         return self.first(outputs1)
 
     def query_emb(self, input_ids, attention_mask):
-        outputs1 = self._text_encode(input_ids=input_ids, attention_mask=attention_mask)
+        outputs1 = self._text_encode(input_ids=input_ids, attention_mask=attention_mask, is_query=True)
         query1 = outputs1
         return query1
 
     def body_emb(self, input_ids, attention_mask):
-        return self.query_emb(input_ids, attention_mask)
+        outputs1 = self._text_encode(input_ids=input_ids, attention_mask=attention_mask, is_query=False)
+        query1 = outputs1
+        return query1
 
     def forward(self, input_ids, attention_mask, is_query, *args):
         assert len(args) == 0
@@ -389,12 +418,82 @@ class BertDot_DualSingle(nn.Module, BaseModelDot, Saveable):
             return self.body_emb(input_ids, attention_mask)
 
 
+class BertDot_DualSingle_Full(nn.Module, BaseModelDot, Saveable):
+    def __init__(self, config, init_path, qod):
+        super().__init__()
+        self.qod = qod
+        self.config = config
+
+        self.bertQ = BertModel.from_pretrained(init_path, config=config)
+        self.bertD = BertModel.from_pretrained(init_path, config=config)
+
+        if hasattr(config, "output_embedding_size"):
+            self.output_embedding_size = config.output_embedding_size
+        else:
+            self.output_embedding_size = config.hidden_size
+
+        self.task_name = 'dpr'
+
+    def init_adapter_setup(self, config):
+        if self.qod == 'Q':
+            self.bertD.freeze_model(freeze=True)
+        else:
+            self.bertQ.freeze_model(freeze=True)
+
+        # check if all the right things a frozen or unfrozen:
+        for (n, p) in self.named_parameters():
+            print(n, p.requires_grad)
+
+    def save_all_adapters(self, output_dir):
+        if self.qod == 'Q':
+            self.bertQ.save_pretrained(output_dir + '/dprQ')
+        else:
+            self.bertD.save_pretrained(output_dir + '/dprD')
+
+    def save_all_adapter_fusions(self, output_dir):
+        pass
+
+    def save_all_heads(self, output_dir):
+        pass
+
+    def load_adapters(self, adapter_path):
+        if self.qod == 'Q':
+            print('loading: ' + adapter_path + '/dprQ')
+            self.bertQ = BertModel.from_pretrained(adapter_path + '/dprQ', config=self.config)
+        else:
+            print('loading: ' + adapter_path + '/dprD')
+            self.bertD = BertModel.from_pretrained(adapter_path + '/dprD', config=self.config)
+
+    def first(self, emb_all):
+        return emb_all[0][:, 0]
+
+    def query_emb(self, input_ids, attention_mask):
+        outputs1 = self.bertQ(input_ids=input_ids, attention_mask=attention_mask)
+        query1 = self.first(outputs1)
+        return query1
+
+    def body_emb(self, input_ids, attention_mask):
+        outputs1 = self.bertD(input_ids=input_ids, attention_mask=attention_mask)
+        body = self.first(outputs1)
+        return body
+
+    def forward(self, input_ids, attention_mask, is_query, *args):
+        assert len(args) == 0
+        if is_query:
+            return self.query_emb(input_ids, attention_mask)
+        else:
+            return self.body_emb(input_ids, attention_mask)
+
+
 class BertDot_Dual(nn.Module, BaseModelDot, Saveable):
     def __init__(self, config, init_path):
         super().__init__()
 
-        self.bertQ = BertModel.from_pretrained(init_path, config=config)
-        self.bertD = BertModel.from_pretrained(init_path, config=config)
+        print('loading: ' + init_path + '/dprQ')
+        print('loading: ' + init_path + '/dprD')
+
+        self.bertQ = BertModel.from_pretrained(init_path + '/dprQ', config=config)
+        self.bertD = BertModel.from_pretrained(init_path + '/dprD', config=config)
         self.config = config
 
         if hasattr(config, "output_embedding_size"):
@@ -438,6 +537,70 @@ class BertDot_Dual(nn.Module, BaseModelDot, Saveable):
         else:
             return self.body_emb(input_ids, attention_mask)
 
+class BertDot_Dual_FullFuse(nn.Module, BaseModelDot, Saveable):
+    def __init__(self, config, init_pathQ, init_pathD):
+        super().__init__()
+
+        self.bertQ = BertModel.from_pretrained(init_pathQ, config=config)
+        self.bertD = BertModel.from_pretrained(init_pathD, config=config)
+
+        self.config = config
+
+        if hasattr(config, "output_embedding_size"):
+            self.output_embedding_size = config.output_embedding_size
+        else:
+            self.output_embedding_size = config.hidden_size
+
+        self.fusion = nn.MultiheadAttention(config.output_embedding_size*2, 2, batch_first=True)
+
+        self.task_name = 'dpr'
+
+    def save_all_adapters(self, output_dir):
+        self.bertQ.save_pretrained(output_dir + '/dprQ')
+        self.bertD.save_pretrained(output_dir + '/dprD')
+
+    def save_all_adapter_fusions(self, output_dir):
+        pass
+
+    def save_all_heads(self, output_dir):
+        pass
+
+    def load_adapters(self, adapter_path):
+        self.bertQ = BertModel.from_pretrained(adapter_path + '/dprQ', config=self.config)
+        self.bertD = BertModel.from_pretrained(adapter_path + '/dprD', config=self.config)
+
+    def first(self, emb_all):
+        return emb_all[0][:, 0]
+
+    def query_emb(self, input_ids, attention_mask):
+        outputs1 = self.bertQ(input_ids=input_ids, attention_mask=attention_mask)
+        query1 = self.first(outputs1)
+        return query1
+
+    def body_emb(self, input_ids, attention_mask):
+        outputs1 = self.bertD(input_ids=input_ids, attention_mask=attention_mask)
+        body = self.first(outputs1)
+        return body
+
+    def forward(self, input_ids, attention_mask, is_query, *args):
+        assert len(args) == 0
+        outputs1 = self.bertQ(input_ids=input_ids, attention_mask=attention_mask)
+        outputs2 = self.bertD(input_ids=input_ids, attention_mask=attention_mask)
+        #query=input,key=output_bert,value_output_bert
+        outputs = self.fusion()
+
+
+
+class BertDot_DualSingle_Full_InBatch(BertDot_DualSingle_Full):
+    def forward(self, input_query_ids, query_attention_mask,
+                input_doc_ids, doc_attention_mask,
+                other_doc_ids=None, other_doc_attention_mask=None,
+                rel_pair_mask=None, hard_pair_mask=None):
+        return inbatch_train(self.query_emb, self.body_emb,
+                             input_query_ids, query_attention_mask,
+                             input_doc_ids, doc_attention_mask,
+                             other_doc_ids, other_doc_attention_mask,
+                             rel_pair_mask, hard_pair_mask)
 
 
 class BertDot_Dual_InBatch(BertDot_Dual):
@@ -451,6 +614,7 @@ class BertDot_Dual_InBatch(BertDot_Dual):
                              other_doc_ids, other_doc_attention_mask,
                              rel_pair_mask, hard_pair_mask)
 
+
 class BertDot_DualSingle_InBatch(BertDot_DualSingle):
     def forward(self, input_query_ids, query_attention_mask,
                 input_doc_ids, doc_attention_mask,
@@ -461,6 +625,7 @@ class BertDot_DualSingle_InBatch(BertDot_DualSingle):
                              input_doc_ids, doc_attention_mask,
                              other_doc_ids, other_doc_attention_mask,
                              rel_pair_mask, hard_pair_mask)
+
 
 class BertDot_DualFusion_InBatch(BertDot_DualFusion):
     def forward(self, input_query_ids, query_attention_mask,
@@ -473,6 +638,7 @@ class BertDot_DualFusion_InBatch(BertDot_DualFusion):
                              other_doc_ids, other_doc_attention_mask,
                              rel_pair_mask, hard_pair_mask)
 
+
 class BertDot_DualAdapter_InBatch(BertDot_DualAdapter):
     def forward(self, input_query_ids, query_attention_mask,
                 input_doc_ids, doc_attention_mask,
@@ -483,6 +649,7 @@ class BertDot_DualAdapter_InBatch(BertDot_DualAdapter):
                              input_doc_ids, doc_attention_mask,
                              other_doc_ids, other_doc_attention_mask,
                              rel_pair_mask, hard_pair_mask)
+
 
 class BertDot_SingleAdapter_InBatch(BertDot_SingleAdapter):
     def forward(self, input_query_ids, query_attention_mask,
@@ -498,14 +665,14 @@ class BertDot_SingleAdapter_InBatch(BertDot_SingleAdapter):
 
 class BertDot_SingleAdapter_Rand(BertDot_SingleAdapter):
     def forward(self, input_query_ids, query_attention_mask,
-            input_doc_ids, doc_attention_mask,
-            other_doc_ids=None, other_doc_attention_mask=None,
-            rel_pair_mask=None, hard_pair_mask=None):
+                input_doc_ids, doc_attention_mask,
+                other_doc_ids=None, other_doc_attention_mask=None,
+                rel_pair_mask=None, hard_pair_mask=None):
         return randneg_train(self.query_emb, self.body_emb,
-            input_query_ids, query_attention_mask,
-            input_doc_ids, doc_attention_mask,
-            other_doc_ids, other_doc_attention_mask,
-            hard_pair_mask)
+                             input_query_ids, query_attention_mask,
+                             input_doc_ids, doc_attention_mask,
+                             other_doc_ids, other_doc_attention_mask,
+                             hard_pair_mask)
 
 
 def inbatch_train(query_encode_func, doc_encode_func,
